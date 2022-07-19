@@ -2,7 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-part of engine;
+import 'package:ui/ui.dart' as ui;
+
+import '../dom.dart';
+import '../platform_dispatcher.dart';
+import '../safe_browser_api.dart';
+import 'semantics.dart';
 
 /// Implements vertical and horizontal scrolling functionality for semantics
 /// objects.
@@ -26,13 +31,13 @@ class Scrollable extends RoleManager {
       : super(Role.scrollable, semanticsObject);
 
   /// Disables browser-driven scrolling in the presence of pointer events.
-  GestureModeCallback _gestureModeListener;
+  GestureModeCallback? _gestureModeListener;
 
   /// Listens to HTML "scroll" gestures detected by the browser.
   ///
   /// This gesture is converted to [ui.SemanticsAction.scrollUp] or
   /// [ui.SemanticsAction.scrollDown], depending on the direction.
-  html.EventListener _scrollListener;
+  DomEventListener? _scrollListener;
 
   /// The value of the "scrollTop" or "scrollLeft" property of this object's
   /// [element] that has zero offset relative to the [scrollPosition].
@@ -52,20 +57,20 @@ class Scrollable extends RoleManager {
       final int semanticsId = semanticsObject.id;
       if (doScrollForward) {
         if (semanticsObject.isVerticalScrollContainer) {
-          ui.window.onSemanticsAction(
+          EnginePlatformDispatcher.instance.invokeOnSemanticsAction(
               semanticsId, ui.SemanticsAction.scrollUp, null);
         } else {
           assert(semanticsObject.isHorizontalScrollContainer);
-          ui.window.onSemanticsAction(
+          EnginePlatformDispatcher.instance.invokeOnSemanticsAction(
               semanticsId, ui.SemanticsAction.scrollLeft, null);
         }
       } else {
         if (semanticsObject.isVerticalScrollContainer) {
-          ui.window.onSemanticsAction(
+          EnginePlatformDispatcher.instance.invokeOnSemanticsAction(
               semanticsId, ui.SemanticsAction.scrollDown, null);
         } else {
           assert(semanticsObject.isHorizontalScrollContainer);
-          ui.window.onSemanticsAction(
+          EnginePlatformDispatcher.instance.invokeOnSemanticsAction(
               semanticsId, ui.SemanticsAction.scrollRight, null);
         }
       }
@@ -102,9 +107,9 @@ class Scrollable extends RoleManager {
       };
       semanticsObject.owner.addGestureModeListener(_gestureModeListener);
 
-      _scrollListener = (_) {
+      _scrollListener = allowInterop((_) {
         _recomputeScrollPosition();
-      };
+      });
       semanticsObject.element.addEventListener('scroll', _scrollListener);
     }
   }
@@ -125,7 +130,7 @@ class Scrollable extends RoleManager {
   /// have zero offset relative to Flutter's notion of scroll position is
   /// referred to as "neutral scroll position".
   ///
-  /// We always set the the scroll position to a non-zero value in order to
+  /// We always set the scroll position to a non-zero value in order to
   /// be able to scroll in the negative direction. When scrollTop/scrollLeft is
   /// zero the browser will refuse to scroll back even when there is more
   /// content available.
@@ -133,7 +138,7 @@ class Scrollable extends RoleManager {
     // This value is arbitrary.
     const int _canonicalNeutralScrollPosition = 10;
 
-    final html.Element element = semanticsObject.element;
+    final DomElement element = semanticsObject.element;
     if (semanticsObject.isVerticalScrollContainer) {
       element.scrollTop = _canonicalNeutralScrollPosition;
       // Read back because the effective value depends on the amount of content.
@@ -154,7 +159,7 @@ class Scrollable extends RoleManager {
   }
 
   void _gestureModeDidChange() {
-    final html.Element element = semanticsObject.element;
+    final DomElement element = semanticsObject.element;
     switch (semanticsObject.owner.gestureMode) {
       case GestureMode.browserGestures:
         // overflow:scroll will cause the browser report "scroll" events when
@@ -185,7 +190,7 @@ class Scrollable extends RoleManager {
 
   @override
   void dispose() {
-    final html.CssStyleDeclaration style = semanticsObject.element.style;
+    final DomCSSStyleDeclaration style = semanticsObject.element.style;
     assert(_gestureModeListener != null);
     style.removeProperty('overflowY');
     style.removeProperty('overflowX');

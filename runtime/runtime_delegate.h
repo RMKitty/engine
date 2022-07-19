@@ -8,6 +8,7 @@
 #include <memory>
 #include <vector>
 
+#include "flutter/assets/asset_manager.h"
 #include "flutter/flow/layers/layer_tree.h"
 #include "flutter/lib/ui/semantics/custom_accessibility_action.h"
 #include "flutter/lib/ui/semantics/semantics_node.h"
@@ -28,14 +29,25 @@ class RuntimeDelegate {
   virtual void UpdateSemantics(SemanticsNodeUpdates update,
                                CustomAccessibilityActionUpdates actions) = 0;
 
-  virtual void HandlePlatformMessage(fml::RefPtr<PlatformMessage> message) = 0;
+  virtual void HandlePlatformMessage(
+      std::unique_ptr<PlatformMessage> message) = 0;
 
   virtual FontCollection& GetFontCollection() = 0;
+
+  virtual std::shared_ptr<AssetManager> GetAssetManager() = 0;
+
+  virtual void OnRootIsolateCreated() = 0;
 
   virtual void UpdateIsolateDescription(const std::string isolate_name,
                                         int64_t isolate_port) = 0;
 
   virtual void SetNeedsReportTimings(bool value) = 0;
+
+  virtual std::unique_ptr<std::vector<std::string>>
+  ComputePlatformResolvedLocale(
+      const std::vector<std::string>& supported_locale_data) = 0;
+
+  virtual void RequestDartDeferredLibrary(intptr_t loading_unit_id) = 0;
 
  protected:
   virtual ~RuntimeDelegate();

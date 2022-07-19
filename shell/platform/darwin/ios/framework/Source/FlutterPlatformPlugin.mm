@@ -2,13 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "flutter/shell/platform/darwin/ios/framework/Source/FlutterPlatformPlugin.h"
-#include "flutter/fml/logging.h"
+#import "flutter/shell/platform/darwin/ios/framework/Source/FlutterPlatformPlugin.h"
 
-#include <AudioToolbox/AudioToolbox.h>
-#include <Foundation/Foundation.h>
-#include <UIKit/UIApplication.h>
-#include <UIKit/UIKit.h>
+#import <AudioToolbox/AudioToolbox.h>
+#import <Foundation/Foundation.h>
+#import <UIKit/UIApplication.h>
+#import <UIKit/UIKit.h>
+
+#include "flutter/fml/logging.h"
+#import "flutter/shell/platform/darwin/ios/framework/Source/FlutterViewController_Internal.h"
 
 namespace {
 
@@ -35,12 +37,6 @@ using namespace flutter;
 
 @implementation FlutterPlatformPlugin {
   fml::WeakPtr<FlutterEngine> _engine;
-}
-
-- (instancetype)init {
-  @throw([NSException exceptionWithName:@"FlutterPlatformPlugin must initWithEngine"
-                                 reason:nil
-                               userInfo:nil]);
 }
 
 - (instancetype)initWithEngine:(fml::WeakPtr<FlutterEngine>)engine {
@@ -72,6 +68,9 @@ using namespace flutter;
   } else if ([method isEqualToString:@"SystemChrome.setEnabledSystemUIOverlays"]) {
     [self setSystemChromeEnabledSystemUIOverlays:args];
     result(nil);
+  } else if ([method isEqualToString:@"SystemChrome.setEnabledSystemUIMode"]) {
+    [self setSystemChromeEnabledSystemUIMode:args];
+    result(nil);
   } else if ([method isEqualToString:@"SystemChrome.restoreSystemUIOverlays"]) {
     [self restoreSystemChromeSystemUIOverlays];
     result(nil);
@@ -79,13 +78,16 @@ using namespace flutter;
     [self setSystemChromeSystemUIOverlayStyle:args];
     result(nil);
   } else if ([method isEqualToString:@"SystemNavigator.pop"]) {
-    [self popSystemNavigator];
+    NSNumber* isAnimated = args;
+    [self popSystemNavigator:isAnimated.boolValue];
     result(nil);
   } else if ([method isEqualToString:@"Clipboard.getData"]) {
     result([self getClipboardData:args]);
   } else if ([method isEqualToString:@"Clipboard.setData"]) {
     [self setClipboardData:args];
     result(nil);
+  } else if ([method isEqualToString:@"Clipboard.hasStrings"]) {
+    result([self clipboardHasStrings]);
   } else {
     result(FlutterMethodNotImplemented);
   }
@@ -107,14 +109,16 @@ using namespace flutter;
 
   if (@available(iOS 10, *)) {
     if ([@"HapticFeedbackType.lightImpact" isEqualToString:feedbackType]) {
-      [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight] impactOccurred];
+      [[[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight] autorelease]
+          impactOccurred];
     } else if ([@"HapticFeedbackType.mediumImpact" isEqualToString:feedbackType]) {
-      [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium]
+      [[[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium] autorelease]
           impactOccurred];
     } else if ([@"HapticFeedbackType.heavyImpact" isEqualToString:feedbackType]) {
-      [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleHeavy] impactOccurred];
+      [[[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleHeavy] autorelease]
+          impactOccurred];
     } else if ([@"HapticFeedbackType.selectionClick" isEqualToString:feedbackType]) {
-      [[[UISelectionFeedbackGenerator alloc] init] selectionChanged];
+      [[[[UISelectionFeedbackGenerator alloc] init] autorelease] selectionChanged];
     }
   }
 }
@@ -126,19 +130,21 @@ using namespace flutter;
     mask |= UIInterfaceOrientationMaskAll;
   } else {
     for (NSString* orientation in orientations) {
-      if ([orientation isEqualToString:@"DeviceOrientation.portraitUp"])
+      if ([orientation isEqualToString:@"DeviceOrientation.portraitUp"]) {
         mask |= UIInterfaceOrientationMaskPortrait;
-      else if ([orientation isEqualToString:@"DeviceOrientation.portraitDown"])
+      } else if ([orientation isEqualToString:@"DeviceOrientation.portraitDown"]) {
         mask |= UIInterfaceOrientationMaskPortraitUpsideDown;
-      else if ([orientation isEqualToString:@"DeviceOrientation.landscapeLeft"])
+      } else if ([orientation isEqualToString:@"DeviceOrientation.landscapeLeft"]) {
         mask |= UIInterfaceOrientationMaskLandscapeLeft;
-      else if ([orientation isEqualToString:@"DeviceOrientation.landscapeRight"])
+      } else if ([orientation isEqualToString:@"DeviceOrientation.landscapeRight"]) {
         mask |= UIInterfaceOrientationMaskLandscapeRight;
+      }
     }
   }
 
-  if (!mask)
+  if (!mask) {
     return;
+  }
   [[NSNotificationCenter defaultCenter]
       postNotificationName:@(kOrientationUpdateNotificationName)
                     object:nil
@@ -158,6 +164,35 @@ using namespace flutter;
   // UIViewControllerBasedStatusBarAppearance
   [UIApplication sharedApplication].statusBarHidden =
       ![overlays containsObject:@"SystemUiOverlay.top"];
+  if ([overlays containsObject:@"SystemUiOverlay.bottom"]) {
+    [[NSNotificationCenter defaultCenter]
+        postNotificationName:FlutterViewControllerShowHomeIndicator
+                      object:nil];
+  } else {
+    [[NSNotificationCenter defaultCenter]
+        postNotificationName:FlutterViewControllerHideHomeIndicator
+                      object:nil];
+  }
+}
+
+- (void)setSystemChromeEnabledSystemUIMode:(NSString*)mode {
+  // Checks if the top status bar should be visible, reflected by edge to edge setting. This
+  // platform ignores all other system ui modes.
+
+  // We opt out of view controller based status bar visibility since we want
+  // to be able to modify this on the fly. The key used is
+  // UIViewControllerBasedStatusBarAppearance
+  [UIApplication sharedApplication].statusBarHidden =
+      ![mode isEqualToString:@"SystemUiMode.edgeToEdge"];
+  if ([mode isEqualToString:@"SystemUiMode.edgeToEdge"]) {
+    [[NSNotificationCenter defaultCenter]
+        postNotificationName:FlutterViewControllerShowHomeIndicator
+                      object:nil];
+  } else {
+    [[NSNotificationCenter defaultCenter]
+        postNotificationName:FlutterViewControllerHideHomeIndicator
+                      object:nil];
+  }
 }
 
 - (void)restoreSystemChromeSystemUIOverlays {
@@ -165,17 +200,23 @@ using namespace flutter;
 }
 
 - (void)setSystemChromeSystemUIOverlayStyle:(NSDictionary*)message {
-  NSString* style = message[@"statusBarBrightness"];
-  if (style == (id)[NSNull null])
+  NSString* brightness = message[@"statusBarBrightness"];
+  if (brightness == (id)[NSNull null]) {
     return;
+  }
 
   UIStatusBarStyle statusBarStyle;
-  if ([style isEqualToString:@"Brightness.dark"])
+  if ([brightness isEqualToString:@"Brightness.dark"]) {
     statusBarStyle = UIStatusBarStyleLightContent;
-  else if ([style isEqualToString:@"Brightness.light"])
-    statusBarStyle = UIStatusBarStyleDefault;
-  else
+  } else if ([brightness isEqualToString:@"Brightness.light"]) {
+    if (@available(iOS 13, *)) {
+      statusBarStyle = UIStatusBarStyleDarkContent;
+    } else {
+      statusBarStyle = UIStatusBarStyleDefault;
+    }
+  } else {
     return;
+  }
 
   NSNumber* infoValue = [[NSBundle mainBundle]
       objectForInfoDictionaryKey:@"UIViewControllerBasedStatusBarAppearance"];
@@ -194,19 +235,22 @@ using namespace flutter;
   }
 }
 
-- (void)popSystemNavigator {
+- (void)popSystemNavigator:(BOOL)isAnimated {
   // Apple's human user guidelines say not to terminate iOS applications. However, if the
   // root view of the app is a navigation controller, it is instructed to back up a level
   // in the navigation hierarchy.
   // It's also possible in an Add2App scenario that the FlutterViewController was presented
   // outside the context of a UINavigationController, and still wants to be popped.
-  UIViewController* viewController = [UIApplication sharedApplication].keyWindow.rootViewController;
-  if ([viewController isKindOfClass:[UINavigationController class]]) {
-    [((UINavigationController*)viewController) popViewControllerAnimated:NO];
+
+  UIViewController* engineViewController = [_engine.get() viewController];
+  UINavigationController* navigationController = [engineViewController navigationController];
+  if (navigationController) {
+    [navigationController popViewControllerAnimated:isAnimated];
   } else {
-    auto engineViewController = static_cast<UIViewController*>([_engine.get() viewController]);
-    if (engineViewController != viewController) {
-      [engineViewController dismissViewControllerAnimated:NO completion:nil];
+    UIViewController* rootViewController =
+        [UIApplication sharedApplication].keyWindow.rootViewController;
+    if (engineViewController != rootViewController) {
+      [engineViewController dismissViewControllerAnimated:isAnimated completion:nil];
     }
   }
 }
@@ -223,7 +267,24 @@ using namespace flutter;
 
 - (void)setClipboardData:(NSDictionary*)data {
   UIPasteboard* pasteboard = [UIPasteboard generalPasteboard];
-  pasteboard.string = data[@"text"];
+  id copyText = data[@"text"];
+  if ([copyText isKindOfClass:[NSString class]]) {
+    pasteboard.string = copyText;
+  } else {
+    pasteboard.string = @"null";
+  }
+}
+
+- (NSDictionary*)clipboardHasStrings {
+  bool hasStrings = false;
+  UIPasteboard* pasteboard = [UIPasteboard generalPasteboard];
+  if (@available(iOS 10, *)) {
+    hasStrings = pasteboard.hasStrings;
+  } else {
+    NSString* stringInPasteboard = pasteboard.string;
+    hasStrings = stringInPasteboard != nil;
+  }
+  return @{@"value" : @(hasStrings)};
 }
 
 @end

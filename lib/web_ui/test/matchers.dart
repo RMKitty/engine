@@ -5,26 +5,24 @@
 /// Provides utilities for testing engine code.
 library matchers;
 
-import 'dart:html' as html;
-
-import 'package:html/parser.dart' as html_package;
-import 'package:html/dom.dart' as html_package;
 import 'dart:math' as math;
 
-import 'package:meta/meta.dart';
+import 'package:html/dom.dart' as html_package;
+import 'package:html/parser.dart' as html_package;
+
 import 'package:test/test.dart';
 
-import 'package:ui/ui.dart';
 import 'package:ui/src/engine.dart';
+import 'package:ui/ui.dart';
 
 /// Enumerates all persisted surfaces in the tree rooted at [root].
 ///
 /// If [root] is `null` returns all surfaces from the last rendered scene.
 ///
 /// Surfaces are returned in a depth-first order.
-Iterable<PersistedSurface> enumerateSurfaces([PersistedSurface root]) {
-  root ??= SceneBuilder.debugLastFrameScene;
-  final List<PersistedSurface> surfaces = <PersistedSurface>[root];
+Iterable<PersistedSurface> enumerateSurfaces([PersistedSurface? root]) {
+  root ??= SurfaceSceneBuilder.debugLastFrameScene;
+  final List<PersistedSurface> surfaces = <PersistedSurface>[root!];
 
   root.visitChildren((PersistedSurface surface) {
     surfaces.addAll(enumerateSurfaces(surface));
@@ -36,16 +34,16 @@ Iterable<PersistedSurface> enumerateSurfaces([PersistedSurface root]) {
 /// Enumerates all pictures nested under [root].
 ///
 /// If [root] is `null` returns all pictures from the last rendered scene.
-Iterable<PersistedPicture> enumeratePictures([PersistedSurface root]) {
-  root ??= SceneBuilder.debugLastFrameScene;
+Iterable<PersistedPicture> enumeratePictures([PersistedSurface? root]) {
+  root ??= SurfaceSceneBuilder.debugLastFrameScene;
   return enumerateSurfaces(root).whereType<PersistedPicture>();
 }
 
 /// Enumerates all offset surfaces nested under [root].
 ///
 /// If [root] is `null` returns all pictures from the last rendered scene.
-Iterable<PersistedOffset> enumerateOffsets([PersistedSurface root]) {
-  root ??= SceneBuilder.debugLastFrameScene;
+Iterable<PersistedOffset> enumerateOffsets([PersistedSurface? root]) {
+  root ??= SurfaceSceneBuilder.debugLastFrameScene;
   return enumerateSurfaces(root).whereType<PersistedOffset>();
 }
 
@@ -75,7 +73,7 @@ typedef DistanceFunction<T> = num Function(T a, T b);
 ///
 /// Calling an instance of this type must either be done dynamically, or by
 /// first casting it to a [DistanceFunction<T>] for some concrete T.
-typedef AnyDistanceFunction = num Function(Null a, Null b);
+typedef AnyDistanceFunction = num Function(Never a, Never b);
 
 const Map<Type, AnyDistanceFunction> _kStandardDistanceFunctions =
     <Type, AnyDistanceFunction>{
@@ -107,7 +105,7 @@ double _rectDistance(Rect a, Rect b) {
 }
 
 double _sizeDistance(Size a, Size b) {
-  final Offset delta = b - a;
+  final Offset delta = (b - a) as Offset; // ignore: unnecessary_parenthesis
   return delta.distance;
 }
 
@@ -116,8 +114,7 @@ double _sizeDistance(Size a, Size b) {
 /// The distance is computed by a [DistanceFunction].
 ///
 /// If `distanceFunction` is null, a standard distance function is used for the
-/// `runtimeType` of the `from` argument. Standard functions are defined for
-/// the following types:
+/// type `T` . Standard functions are defined for the following types:
 ///
 ///  * [Color], whose distance is the maximum component-wise delta.
 ///  * [Offset], whose distance is the Euclidean distance computed using the
@@ -134,16 +131,16 @@ double _sizeDistance(Size a, Size b) {
 ///    [double]s and has an optional `epsilon` parameter.
 ///  * [closeTo], which specializes in numbers only.
 Matcher within<T>({
-  @required num distance,
-  @required T from,
-  DistanceFunction<T> distanceFunction,
+  required num distance,
+  required T from,
+  DistanceFunction<T>? distanceFunction,
 }) {
-  distanceFunction ??= _kStandardDistanceFunctions[from.runtimeType];
+  distanceFunction ??= _kStandardDistanceFunctions[T] as DistanceFunction<T>?;
 
   if (distanceFunction == null) {
     throw ArgumentError(
         'The specified distanceFunction was null, and a standard distance '
-        'function was not found for type ${from.runtimeType} of the provided '
+        'function was not found for type $T of the provided '
         '`from` argument.');
   }
 
@@ -158,9 +155,13 @@ class _IsWithinDistance<T> extends Matcher {
   final num epsilon;
 
   @override
-  bool matches(Object object, Map<dynamic, dynamic> matchState) {
-    if (object is! T) return false;
-    if (object == value) return true;
+  bool matches(Object? object, Map<dynamic, dynamic> matchState) {
+    if (object is! T) {
+      return false;
+    }
+    if (object == value) {
+      return true;
+    }
     final T test = object;
     final num distance = distanceFunction(test, value);
     if (distance < 0) {
@@ -179,7 +180,7 @@ class _IsWithinDistance<T> extends Matcher {
 
   @override
   Description describeMismatch(
-    Object object,
+    Object? object,
     Description mismatchDescription,
     Map<dynamic, dynamic> matchState,
     bool verbose,
@@ -223,14 +224,17 @@ enum HtmlComparisonMode {
 /// [throwOnUnusedAttributes] to `true` to check that expected HTML strings do
 /// not contain irrelevant attributes. It is ok for actual HTML to contain all
 /// kinds of attributes. They only need to be filtered out before testing.
-String canonicalizeHtml(String htmlContent,
-    {HtmlComparisonMode mode = HtmlComparisonMode.nonLayoutOnly,
-    bool throwOnUnusedAttributes = false}) {
-  if (htmlContent == null || htmlContent.trim().isEmpty) {
+String canonicalizeHtml(
+  String htmlContent, {
+  HtmlComparisonMode mode = HtmlComparisonMode.nonLayoutOnly,
+  bool throwOnUnusedAttributes = false,
+  List<String>? ignoredAttributes,
+}) {
+  if (htmlContent.trim().isEmpty) {
     return '';
   }
 
-  String _unusedAttribute(String name) {
+  String? _unusedAttribute(String name) {
     if (throwOnUnusedAttributes) {
       fail('Provided HTML contains style attribute "$name" which '
           'is not used for comparison in the test. The HTML was:\n\n$htmlContent');
@@ -240,7 +244,7 @@ String canonicalizeHtml(String htmlContent,
   }
 
   html_package.Element _cleanup(html_package.Element original) {
-    String replacementTag = original.localName;
+    String replacementTag = original.localName!;
     switch (replacementTag) {
       case 'flt-scene':
         replacementTag = 's';
@@ -252,7 +256,7 @@ String canonicalizeHtml(String htmlContent,
         replacementTag = 'o';
         break;
       case 'flt-clip':
-        final String clipType = original.attributes['clip-type'];
+        final String? clipType = original.attributes['clip-type'];
         switch (clipType) {
           case 'rect':
             replacementTag = 'clip';
@@ -264,7 +268,7 @@ String canonicalizeHtml(String htmlContent,
             replacementTag = 'pshape';
             break;
           default:
-            throw Exception('Unknown clip type: ${clipType}');
+            throw Exception('Unknown clip type: $clipType');
         }
         break;
       case 'flt-clip-interior':
@@ -296,10 +300,14 @@ String canonicalizeHtml(String htmlContent,
         break;
     }
 
-    html_package.Element replacement = html_package.Element.tag(replacementTag);
+    final html_package.Element replacement =
+        html_package.Element.tag(replacementTag);
 
     if (mode != HtmlComparisonMode.noAttributes) {
       original.attributes.forEach((dynamic name, String value) {
+        if (name is! String) {
+          throw '"$name" should be String but was ${name.runtimeType}.';
+        }
         if (name == 'style') {
           return;
         }
@@ -309,26 +317,31 @@ String canonicalizeHtml(String htmlContent,
       });
 
       if (original.attributes.containsKey('style')) {
-        final styleValue = original.attributes['style'];
+        final String styleValue = original.attributes['style']!;
 
         int attrCount = 0;
-        String processedAttributes = styleValue
+        final String processedAttributes = styleValue
             .split(';')
-            .map((attr) {
+            .map((String attr) {
               attr = attr.trim();
               if (attr.isEmpty) {
                 return null;
               }
 
               if (mode != HtmlComparisonMode.everything) {
-                final forLayout = mode == HtmlComparisonMode.layoutOnly;
-                List<String> parts = attr.split(':');
+                final bool forLayout = mode == HtmlComparisonMode.layoutOnly;
+                final List<String> parts = attr.split(':');
                 if (parts.length == 2) {
-                  String name = parts.first;
+                  final String name = parts.first;
+
+                  if (ignoredAttributes != null && ignoredAttributes.contains(name)) {
+                    return null;
+                  }
+
                   // Whether the attribute is one that's set to the same value and
                   // never changes. Such attributes are usually not interesting to
                   // test.
-                  bool isStaticAttribute = const <String>[
+                  final bool isStaticAttribute = const <String>[
                     'top',
                     'left',
                     'position',
@@ -339,7 +352,7 @@ String canonicalizeHtml(String htmlContent,
                   }
 
                   // Whether the attribute is set by the layout system.
-                  bool isLayoutAttribute = const <String>[
+                  final bool isLayoutAttribute = const <String>[
                     'top',
                     'left',
                     'bottom',
@@ -363,7 +376,7 @@ String canonicalizeHtml(String htmlContent,
               attrCount++;
               return attr.trim();
             })
-            .where((attr) => attr != null && attr.isNotEmpty)
+            .where((String? attr) => attr != null && attr.isNotEmpty)
             .join('; ');
 
         if (attrCount > 0) {
@@ -375,7 +388,7 @@ String canonicalizeHtml(String htmlContent,
           'is $mode. The HTML was:\n\n$htmlContent');
     }
 
-    for (html_package.Node child in original.nodes) {
+    for (final html_package.Node child in original.nodes) {
       if (child is html_package.Text && child.text.trim().isEmpty) {
         continue;
       }
@@ -390,11 +403,12 @@ String canonicalizeHtml(String htmlContent,
     return replacement;
   }
 
-  html_package.DocumentFragment originalDom =
+  final html_package.DocumentFragment originalDom =
       html_package.parseFragment(htmlContent);
 
-  html_package.DocumentFragment cleanDom = html_package.DocumentFragment();
-  for (var child in originalDom.children) {
+  final html_package.DocumentFragment cleanDom =
+      html_package.DocumentFragment();
+  for (final html_package.Element child in originalDom.children) {
     cleanDom.append(_cleanup(child));
   }
 
@@ -402,11 +416,11 @@ String canonicalizeHtml(String htmlContent,
 }
 
 /// Tests that [element] has the HTML structure described by [expectedHtml].
-void expectHtml(html.Element element, String expectedHtml,
+void expectHtml(DomElement element, String expectedHtml,
     {HtmlComparisonMode mode = HtmlComparisonMode.nonLayoutOnly}) {
   expectedHtml =
       canonicalizeHtml(expectedHtml, mode: mode, throwOnUnusedAttributes: true);
-  String actualHtml = canonicalizeHtml(element.outerHtml, mode: mode);
+  final String actualHtml = canonicalizeHtml(element.outerHTML!, mode: mode);
   expect(actualHtml, expectedHtml);
 }
 
@@ -441,22 +455,47 @@ void expectHtml(html.Element element, String expectedHtml,
 void expectPageHtml(String expectedHtml,
     {HtmlComparisonMode mode = HtmlComparisonMode.nonLayoutOnly}) {
   expectedHtml = canonicalizeHtml(expectedHtml, mode: mode);
-  String actualHtml = canonicalizeHtml(currentHtml, mode: mode);
+  final String actualHtml = canonicalizeHtml(currentHtml, mode: mode);
   expect(actualHtml, expectedHtml);
 }
 
 /// Currently rendered HTML DOM as an HTML string.
 String get currentHtml {
-  return domRenderer.sceneElement?.outerHtml ?? '';
+  return flutterViewEmbedder.sceneElement?.outerHTML ?? '';
 }
 
 class SceneTester {
   SceneTester(this.scene);
 
-  final Scene scene;
+  final SurfaceScene scene;
 
   void expectSceneHtml(String expectedHtml) {
-    expectHtml(scene.webOnlyRootElement, expectedHtml,
+    expectHtml(scene.webOnlyRootElement!, expectedHtml,
         mode: HtmlComparisonMode.noAttributes);
   }
 }
+
+/// A matcher for functions that throw [AssertionError].
+///
+/// This is equivalent to `throwsA(isInstanceOf<AssertionError>())`.
+///
+/// If you are trying to test whether a call to [WidgetTester.pumpWidget]
+/// results in an [AssertionError], see
+/// [TestWidgetsFlutterBinding.takeException].
+///
+/// See also:
+///
+///  * [throwsFlutterError], to test if a function throws a [FlutterError].
+///  * [throwsArgumentError], to test if a functions throws an [ArgumentError].
+///  * [isAssertionError], to test if any object is any kind of [AssertionError].
+final Matcher throwsAssertionError = throwsA(isAssertionError);
+
+/// A matcher for [AssertionError].
+///
+/// This is equivalent to `isInstanceOf<AssertionError>()`.
+///
+/// See also:
+///
+///  * [throwsAssertionError], to test if a function throws any [AssertionError].
+///  * [isFlutterError], to test if any object is a [FlutterError].
+const Matcher isAssertionError = TypeMatcher<AssertionError>();

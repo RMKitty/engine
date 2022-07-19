@@ -4,16 +4,23 @@
 
 #include "flutter/shell/gpu/gpu_surface_gl_delegate.h"
 
+#include <cstring>
+
 #include "third_party/skia/include/gpu/gl/GrGLAssembleInterface.h"
 
 namespace flutter {
+
+GPUSurfaceGLDelegate::~GPUSurfaceGLDelegate() = default;
 
 bool GPUSurfaceGLDelegate::GLContextFBOResetAfterPresent() const {
   return false;
 }
 
-bool GPUSurfaceGLDelegate::UseOffscreenSurface() const {
-  return false;
+SurfaceFrame::FramebufferInfo GPUSurfaceGLDelegate::GLContextFramebufferInfo()
+    const {
+  SurfaceFrame::FramebufferInfo res;
+  res.supports_readback = true;
+  return res;
 }
 
 SkMatrix GPUSurfaceGLDelegate::GLContextSurfaceTransformation() const {
@@ -33,7 +40,11 @@ static bool IsProcResolverOpenGLES(
 #define GPU_GL_VERSION 0x1F02
   constexpr char kGLESVersionPrefix[] = "OpenGL ES";
 
+#ifdef WIN32
+  using GLGetStringProc = const char*(__stdcall*)(uint32_t);
+#else
   using GLGetStringProc = const char* (*)(uint32_t);
+#endif
 
   GLGetStringProc gl_get_string =
       reinterpret_cast<GLGetStringProc>(proc_resolver("glGetString"));
@@ -93,6 +104,10 @@ sk_sp<const GrGLInterface> GPUSurfaceGLDelegate::GetGLInterface() const {
 sk_sp<const GrGLInterface>
 GPUSurfaceGLDelegate::GetDefaultPlatformGLInterface() {
   return CreateGLInterface(nullptr);
+}
+
+bool GPUSurfaceGLDelegate::AllowsDrawingWhenGpuDisabled() const {
+  return true;
 }
 
 }  // namespace flutter

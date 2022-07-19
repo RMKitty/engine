@@ -2,16 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'package:ui/ui.dart';
-
+import 'package:test/bootstrap/browser.dart';
 import 'package:test/test.dart';
 
+import 'package:ui/ui.dart';
+
 void main() {
+  internalBootstrapBrowserTest(() => testMain);
+}
+
+void testMain() {
   test('Gradient.radial with no focal point', () {
     expect(
-      new Gradient.radial(
+      Gradient.radial(
           Offset.zero,
-          null,
+          5.0,
           <Color>[const Color(0xFFFFFFFF), const Color(0xFFFFFFFF)],
           <double>[0.0, 1.0],
           TileMode.mirror),
@@ -23,7 +28,7 @@ void main() {
   test('radial center and focal == Offset.zero and focalRadius == 0.0 is ok',
       () {
     expect(
-        () => new Gradient.radial(
+        () => Gradient.radial(
               Offset.zero,
               0.0,
               <Color>[const Color(0xFFFFFFFF), const Color(0xFFFFFFFF)],
@@ -38,7 +43,7 @@ void main() {
 
   test('radial center != focal and focalRadius == 0.0 is ok', () {
     expect(
-        () => new Gradient.radial(
+        () => Gradient.radial(
               Offset.zero,
               0.0,
               <Color>[const Color(0xFFFFFFFF), const Color(0xFFFFFFFF)],
@@ -55,7 +60,7 @@ void main() {
   test('radial center and focal == Offset.zero and focalRadius != 0.0 assert',
       () {
     expect(
-      () => new Gradient.radial(
+      () => Gradient.radial(
             Offset.zero,
             0.0,
             <Color>[const Color(0xFFFFFFFF), const Color(0xFFFFFFFF)],

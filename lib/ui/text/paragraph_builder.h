@@ -13,10 +13,6 @@
 #include "flutter/third_party/txt/src/txt/paragraph_builder.h"
 #include "third_party/tonic/typed_data/typed_list.h"
 
-namespace tonic {
-class DartLibraryNatives;
-}  // namespace tonic
-
 namespace flutter {
 
 class Paragraph;
@@ -26,19 +22,19 @@ class ParagraphBuilder : public RefCountedDartWrappable<ParagraphBuilder> {
   FML_FRIEND_MAKE_REF_COUNTED(ParagraphBuilder);
 
  public:
-  static fml::RefPtr<ParagraphBuilder> create(
-      tonic::Int32List& encoded,
-      Dart_Handle strutData,
-      const std::string& fontFamily,
-      const std::vector<std::string>& strutFontFamilies,
-      double fontSize,
-      double height,
-      const std::u16string& ellipsis,
-      const std::string& locale);
+  static void Create(Dart_Handle wrapper,
+                     Dart_Handle encoded_handle,
+                     Dart_Handle strutData,
+                     const std::string& fontFamily,
+                     const std::vector<std::string>& strutFontFamilies,
+                     double fontSize,
+                     double height,
+                     const std::u16string& ellipsis,
+                     const std::string& locale);
 
   ~ParagraphBuilder() override;
 
-  void pushStyle(tonic::Int32List& encoded,
+  void pushStyle(const tonic::Int32List& encoded,
                  const std::vector<std::string>& fontFamilies,
                  double fontSize,
                  double letterSpacing,
@@ -51,13 +47,14 @@ class ParagraphBuilder : public RefCountedDartWrappable<ParagraphBuilder> {
                  Dart_Handle foreground_objects,
                  Dart_Handle foreground_data,
                  Dart_Handle shadows_data,
-                 Dart_Handle font_features_data);
+                 Dart_Handle font_features_data,
+                 Dart_Handle font_variations_data);
 
   void pop();
 
   Dart_Handle addText(const std::u16string& text);
 
-  // Pushes the information requried to leave an open space, where Flutter may
+  // Pushes the information required to leave an open space, where Flutter may
   // draw a custom placeholder into.
   //
   // Internally, this method adds a single object replacement character (0xFFFC)
@@ -69,12 +66,10 @@ class ParagraphBuilder : public RefCountedDartWrappable<ParagraphBuilder> {
                              double baseline_offset,
                              unsigned baseline);
 
-  fml::RefPtr<Paragraph> build();
-
-  static void RegisterNatives(tonic::DartLibraryNatives* natives);
+  void build(Dart_Handle paragraph_handle);
 
  private:
-  explicit ParagraphBuilder(tonic::Int32List& encoded,
+  explicit ParagraphBuilder(Dart_Handle encoded,
                             Dart_Handle strutData,
                             const std::string& fontFamily,
                             const std::vector<std::string>& strutFontFamilies,

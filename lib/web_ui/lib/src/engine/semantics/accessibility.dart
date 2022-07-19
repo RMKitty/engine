@@ -2,7 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-part of engine;
+import 'dart:async';
+import 'dart:typed_data';
+
+import '../../engine.dart'  show registerHotRestartListener;
+import '../dom.dart';
+import '../services.dart';
+import '../util.dart';
 
 /// Singleton for accessing accessibility announcements from the platform.
 final AccessibilityAnnouncements accessibilityAnnouncements =
@@ -17,7 +23,7 @@ class AccessibilityAnnouncements {
     return _instance ??= AccessibilityAnnouncements._();
   }
 
-  static AccessibilityAnnouncements _instance;
+  static AccessibilityAnnouncements? _instance;
 
   AccessibilityAnnouncements._() {
     registerHotRestartListener(() {
@@ -30,7 +36,7 @@ class AccessibilityAnnouncements {
   ///
   /// The element is added to the DOM temporarily for announcing the
   /// message to the assistive technology.
-  Timer _removeElementTimer;
+  Timer? _removeElementTimer;
 
   /// The duration the accessibility announcements stay on the DOM.
   ///
@@ -46,20 +52,20 @@ class AccessibilityAnnouncements {
   /// This element has aria-live attribute.
   ///
   /// It also has id 'accessibility-element' for testing purposes.
-  html.HtmlElement _element;
+  DomHTMLElement? _element;
 
-  html.HtmlElement get _domElement => _element ??= _createElement();
+  DomHTMLElement get _domElement => _element ??= _createElement();
 
   /// Decodes the message coming from the 'flutter/accessibility' channel.
-  void handleMessage(ByteData data) {
+  void handleMessage(StandardMessageCodec codec, ByteData? data) {
     final Map<dynamic, dynamic> inputMap =
-        const StandardMessageCodec().decodeMessage(data);
-    final Map<dynamic, dynamic> dataMap = inputMap['data'];
-    final String message = dataMap['message'];
+        codec.decodeMessage(data) as Map<dynamic, dynamic>;
+    final Map<dynamic, dynamic> dataMap = inputMap.readDynamicJson('data');
+    final String? message = dataMap.tryString('message');
     if (message != null && message.isNotEmpty) {
       _initLiveRegion(message);
       _removeElementTimer = Timer(durationA11yMessageIsOnDom, () {
-        _element.remove();
+        _element!.remove();
       });
     }
   }
@@ -67,11 +73,11 @@ class AccessibilityAnnouncements {
   void _initLiveRegion(String message) {
     _domElement.setAttribute('aria-live', 'polite');
     _domElement.text = message;
-    html.document.body.append(_domElement);
+    domDocument.body!.append(_domElement);
   }
 
-  html.LabelElement _createElement() {
-    final html.LabelElement liveRegion = html.LabelElement();
+  DomHTMLLabelElement _createElement() {
+    final DomHTMLLabelElement liveRegion = createDomHTMLLabelElement();
     liveRegion.setAttribute('id', 'accessibility-element');
     liveRegion.style
       ..position = 'fixed'

@@ -18,12 +18,16 @@
 #include "flutter/fml/memory/ref_counted.h"
 #include "flutter/fml/message_loop.h"
 #include "flutter/fml/message_loop_task_queues.h"
-#include "flutter/fml/synchronization/thread_annotations.h"
 #include "flutter/fml/time/time_point.h"
 #include "flutter/fml/wakeable.h"
 
 namespace fml {
 
+/// An abstract class that represents the differences in implementation of a \p
+/// fml::MessageLoop depending on the platform.
+/// \see fml::MessageLoop
+/// \see fml::MessageLoopAndroid
+/// \see fml::MessageLoopDarwin
 class MessageLoopImpl : public Wakeable,
                         public fml::RefCountedThreadSafe<MessageLoopImpl> {
  public:
@@ -35,9 +39,9 @@ class MessageLoopImpl : public Wakeable,
 
   virtual void Terminate() = 0;
 
-  void PostTask(fml::closure task, fml::TimePoint target_time);
+  void PostTask(const fml::closure& task, fml::TimePoint target_time);
 
-  void AddTaskObserver(intptr_t key, fml::closure callback);
+  void AddTaskObserver(intptr_t key, const fml::closure& callback);
 
   void RemoveTaskObserver(intptr_t key);
 
@@ -46,8 +50,6 @@ class MessageLoopImpl : public Wakeable,
   void DoTerminate();
 
   virtual TaskQueueId GetTaskQueueId() const;
-
-  void SwapTaskQueues(const fml::RefPtr<MessageLoopImpl>& other);
 
  protected:
   // Exposed for the embedder shell which allows clients to poll for events
@@ -62,10 +64,8 @@ class MessageLoopImpl : public Wakeable,
   MessageLoopImpl();
 
  private:
-  fml::RefPtr<MessageLoopTaskQueues> task_queue_;
+  fml::MessageLoopTaskQueues* task_queue_;
   TaskQueueId queue_id_;
-
-  std::mutex tasks_flushing_mutex_;
 
   std::atomic_bool terminated_;
 

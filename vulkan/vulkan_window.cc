@@ -2,29 +2,38 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "flutter/vulkan/vulkan_window.h"
+// FLUTTER_NOLINT: https://github.com/flutter/flutter/issues/68331
+
+#include "vulkan_window.h"
 
 #include <memory>
 #include <string>
 
-#include "flutter/vulkan/vulkan_application.h"
-#include "flutter/vulkan/vulkan_device.h"
-#include "flutter/vulkan/vulkan_native_surface.h"
-#include "flutter/vulkan/vulkan_surface.h"
-#include "flutter/vulkan/vulkan_swapchain.h"
-#include "third_party/skia/include/gpu/GrContext.h"
+#include "third_party/skia/include/gpu/GrDirectContext.h"
+#include "vulkan_application.h"
+#include "vulkan_device.h"
+#include "vulkan_native_surface.h"
+#include "vulkan_surface.h"
+#include "vulkan_swapchain.h"
 
 namespace vulkan {
 
 VulkanWindow::VulkanWindow(fml::RefPtr<VulkanProcTable> proc_table,
                            std::unique_ptr<VulkanNativeSurface> native_surface)
-    : valid_(false), vk(std::move(proc_table)) {
+    : VulkanWindow(/*context/*/ nullptr,
+                   proc_table,
+                   std::move(native_surface)) {}
+
+VulkanWindow::VulkanWindow(const sk_sp<GrDirectContext>& context,
+                           fml::RefPtr<VulkanProcTable> proc_table,
+                           std::unique_ptr<VulkanNativeSurface> native_surface)
+    : valid_(false), vk(std::move(proc_table)), skia_gr_context_(context) {
   if (!vk || !vk->HasAcquiredMandatoryProcAddresses()) {
     FML_DLOG(INFO) << "Proc table has not acquired mandatory proc addresses.";
     return;
   }
 
-  if (native_surface == nullptr || !native_surface->IsValid()) {
+  if (native_surface && !native_surface->IsValid()) {
     FML_DLOG(INFO) << "Native surface is invalid.";
     return;
   }
@@ -40,9 +49,9 @@ VulkanWindow::VulkanWindow(fml::RefPtr<VulkanProcTable> proc_table,
                                                      std::move(extensions));
 
   if (!application_->IsValid() || !vk->AreInstanceProcsSetup()) {
-    // Make certain the application instance was created and it setup the
+    // Make certain the application instance was created and it set up the
     // instance proc table entries.
-    FML_DLOG(INFO) << "Instance proc addresses have not been setup.";
+    FML_DLOG(INFO) << "Instance proc addresses have not been set up.";
     return;
   }
 
@@ -52,14 +61,17 @@ VulkanWindow::VulkanWindow(fml::RefPtr<VulkanProcTable> proc_table,
 
   if (logical_device_ == nullptr || !logical_device_->IsValid() ||
       !vk->AreDeviceProcsSetup()) {
-    // Make certain the device was created and it setup the device proc table
+    // Make certain the device was created and it set up the device proc table
     // entries.
-    FML_DLOG(INFO) << "Device proc addresses have not been setup.";
+    FML_DLOG(INFO) << "Device proc addresses have not been set up.";
+    return;
+  }
+
+  if (!native_surface) {
     return;
   }
 
   // Create the logical surface from the native platform surface.
-
   surface_ = std::make_unique<VulkanSurface>(*vk, *application_,
                                              std::move(native_surface));
 
@@ -68,9 +80,9 @@ VulkanWindow::VulkanWindow(fml::RefPtr<VulkanProcTable> proc_table,
     return;
   }
 
-  // Create the Skia GrContext.
+  // Create the Skia GrDirectContext.
 
-  if (!CreateSkiaGrContext()) {
+  if (!skia_gr_context_ && !CreateSkiaGrContext()) {
     FML_DLOG(INFO) << "Could not create Skia context.";
     return;
   }
@@ -78,7 +90,7 @@ VulkanWindow::VulkanWindow(fml::RefPtr<VulkanProcTable> proc_table,
   // Create the swapchain.
 
   if (!RecreateSwapchain()) {
-    FML_DLOG(INFO) << "Could not setup the swapchain initially.";
+    FML_DLOG(INFO) << "Could not set up the swapchain initially.";
     return;
   }
 
@@ -91,7 +103,7 @@ bool VulkanWindow::IsValid() const {
   return valid_;
 }
 
-GrContext* VulkanWindow::GetSkiaGrContext() {
+GrDirectContext* VulkanWindow::GetSkiaGrContext() {
   return skia_gr_context_.get();
 }
 
@@ -102,13 +114,16 @@ bool VulkanWindow::CreateSkiaGrContext() {
     return false;
   }
 
-  sk_sp<GrContext> context = GrContext::MakeVulkan(backend_context);
+  GrContextOptions options;
+  options.fReduceOpsTaskSplitting = GrContextOptions::Enable::kNo;
+  sk_sp<GrDirectContext> context =
+      GrDirectContext::MakeVulkan(backend_context, options);
 
   if (context == nullptr) {
     return false;
   }
 
-  context->setResourceCacheLimits(kGrCacheMaxCount, kGrCacheMaxByteSize);
+  context->setResourceCacheLimit(kGrCacheMaxByteSize);
 
   skia_gr_context_ = context;
 

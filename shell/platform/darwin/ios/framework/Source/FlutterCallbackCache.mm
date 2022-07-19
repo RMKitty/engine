@@ -7,6 +7,14 @@
 #include "flutter/lib/ui/plugins/callback_cache.h"
 
 @implementation FlutterCallbackInformation
+
+- (void)dealloc {
+  [_callbackName release];
+  [_callbackClassName release];
+  [_callbackLibraryPath release];
+  [super dealloc];
+}
+
 @end
 
 @implementation FlutterCallbackCache
@@ -16,7 +24,7 @@
   if (info == nullptr) {
     return nil;
   }
-  FlutterCallbackInformation* new_info = [[FlutterCallbackInformation alloc] init];
+  FlutterCallbackInformation* new_info = [[[FlutterCallbackInformation alloc] init] autorelease];
   new_info.callbackName = [NSString stringWithUTF8String:info->name.c_str()];
   new_info.callbackClassName = [NSString stringWithUTF8String:info->class_name.c_str()];
   new_info.callbackLibraryPath = [NSString stringWithUTF8String:info->library_path.c_str()];

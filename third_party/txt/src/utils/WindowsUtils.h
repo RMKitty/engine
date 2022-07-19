@@ -24,6 +24,9 @@
 #define FRIEND_TEST_WINDOWS_DISABLED(SUITE, TEST_NAME) \
   FRIEND_TEST_WINDOWS_DISABLED_EXPANDED(SUITE, DISABLE_TEST_WINDOWS(TEST_NAME))
 
+#define FRIEND_TEST_WINDOWS_ONLY(SUITE, TEST_NAME) FRIEND_TEST(SUITE, TEST_NAME)
+#define WINDOWS_ONLY(TEST_NAME) TEST_NAME
+
 #define NOMINMAX
 #include <BaseTsd.h>
 #include <intrin.h>
@@ -39,7 +42,11 @@ inline unsigned int clz_win(unsigned int num) {
 
 inline unsigned int clzl_win(unsigned long num) {
   unsigned long r = 0;
+#if defined(_WIN64)
   _BitScanReverse64(&r, num);
+#else
+  _BitScanReverse(&r, num);
+#endif
   return r;
 }
 
@@ -55,5 +62,11 @@ typedef SSIZE_T ssize_t;
 #define DISABLE_TEST_WINDOWS(TEST_NAME) TEST_NAME
 #define FRIEND_TEST_WINDOWS_DISABLED(SUITE, TEST_NAME) \
   FRIEND_TEST(SUITE, TEST_NAME)
+
+#define WINDOWS_ONLY(TEST_NAME) DISABLED_##TEST_NAME
+#define FRIEND_TEST_WINDOWS_ONLY_EXPANDED(SUITE, TEST_NAME) \
+  FRIEND_TEST(SUITE, TEST_NAME)
+#define FRIEND_TEST_WINDOWS_ONLY(SUITE, TEST_NAME) \
+  FRIEND_TEST_WINDOWS_ONLY_EXPANDED(SUITE, DISABLE_TEST_WINDOWS(TEST_NAME))
 #endif  // defined(_WIN32)
 #endif  // WINDOWS_UTILS_H

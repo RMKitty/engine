@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
+// @dart = 2.14
 part of dart.ui;
 
 /// How the pointer has changed since the last report.
@@ -34,14 +36,52 @@ enum PointerChange {
 
   /// The pointer has stopped making contact with the device.
   up,
+
+  /// A pan/zoom has started on this pointer.
+  ///
+  /// This type of event will always have kind [PointerDeviceKind.trackpad].
+  panZoomStart,
+
+  /// The pan/zoom on this pointer has updated.
+  ///
+  /// This type of event will always have kind [PointerDeviceKind.trackpad].
+  panZoomUpdate,
+
+  /// The pan/zoom on this pointer has ended.
+  ///
+  /// This type of event will always have kind [PointerDeviceKind.trackpad].
+  panZoomEnd,
 }
 
 /// The kind of pointer device.
 enum PointerDeviceKind {
   /// A touch-based pointer device.
+  ///
+  /// The most common case is a touch screen.
+  ///
+  /// When the user is operating with a trackpad on iOS, clicking will also
+  /// dispatch events with kind [touch] if
+  /// `UIApplicationSupportsIndirectInputEvents` is not present in `Info.plist`
+  /// or returns NO.
+  ///
+  /// See also:
+  ///
+  ///  * [UIApplicationSupportsIndirectInputEvents](https://developer.apple.com/documentation/bundleresources/information_property_list/uiapplicationsupportsindirectinputevents?language=objc).
   touch,
 
   /// A mouse-based pointer device.
+  ///
+  /// The most common case is a mouse on the desktop or Web.
+  ///
+  /// When the user is operating with a trackpad on iOS, moving the pointing
+  /// cursor will also dispatch events with kind [mouse], and clicking will
+  /// dispatch events with kind [mouse] if
+  /// `UIApplicationSupportsIndirectInputEvents` is not present in `Info.plist`
+  /// or returns NO.
+  ///
+  /// See also:
+  ///
+  ///  * [UIApplicationSupportsIndirectInputEvents](https://developer.apple.com/documentation/bundleresources/information_property_list/uiapplicationsupportsindirectinputevents?language=objc).
   mouse,
 
   /// A pointer device with a stylus.
@@ -50,17 +90,47 @@ enum PointerDeviceKind {
   /// A pointer device with a stylus that has been inverted.
   invertedStylus,
 
+  /// Gestures from a trackpad.
+  ///
+  /// A trackpad here is defined as a touch-based pointer device with an
+  /// indirect surface (the user operates the screen by touching something that
+  /// is not the screen).
+  ///
+  /// When the user makes zoom, pan, scroll or rotate gestures with a physical
+  /// trackpad, supporting platforms dispatch events with kind [trackpad].
+  ///
+  /// Events with kind [trackpad] can only have a [PointerChange] of `add`,
+  /// `remove`, and pan-zoom related values.
+  ///
+  /// Some platforms don't support (or don't fully support) trackpad
+  /// gestures, and might convert trackpad gestures into fake pointer events
+  /// that simulate dragging. These events typically have kind [touch] or
+  /// [mouse] instead of [trackpad]. This includes (but is not limited to) Web,
+  /// and iOS when `UIApplicationSupportsIndirectInputEvents` isn't present in
+  /// `Info.plist` or returns NO.
+  ///
+  /// Moving the pointing cursor or clicking with a trackpad typically triggers
+  /// [touch] or [mouse] events, but never triggers [trackpad] events.
+  ///
+  /// See also:
+  ///
+  ///  * [UIApplicationSupportsIndirectInputEvents](https://developer.apple.com/documentation/bundleresources/information_property_list/uiapplicationsupportsindirectinputevents?language=objc).
+  trackpad,
+
   /// An unknown pointer device.
   unknown
 }
 
-/// The kind of [PointerDeviceKind.signal].
+/// The kind of pointer signal event.
 enum PointerSignalKind {
   /// The event is not associated with a pointer signal.
   none,
 
   /// A pointer-generated scroll (e.g., mouse wheel or trackpad scroll).
   scroll,
+
+  /// A pointer-generated scroll-inertia cancel.
+  scrollInertiaCancel,
 
   /// An unknown pointer signal kind.
   unknown
@@ -70,15 +140,20 @@ enum PointerSignalKind {
 class PointerData {
   /// Creates an object that represents the state of a pointer.
   const PointerData({
+    this.embedderId = 0,
     this.timeStamp = Duration.zero,
     this.change = PointerChange.cancel,
     this.kind = PointerDeviceKind.touch,
     this.signalKind,
     this.device = 0,
+    this.pointerIdentifier = 0,
     this.physicalX = 0.0,
     this.physicalY = 0.0,
+    this.physicalDeltaX = 0.0,
+    this.physicalDeltaY = 0.0,
     this.buttons = 0,
     this.obscured = false,
+    this.synthesized = false,
     this.pressure = 0.0,
     this.pressureMin = 0.0,
     this.pressureMax = 0.0,
@@ -94,7 +169,20 @@ class PointerData {
     this.platformData = 0,
     this.scrollDeltaX = 0.0,
     this.scrollDeltaY = 0.0,
+    this.panX = 0.0,
+    this.panY = 0.0,
+    this.panDeltaX = 0.0,
+    this.panDeltaY = 0.0,
+    this.scale = 0.0,
+    this.rotation = 0.0,
   });
+
+  /// Unique identifier that ties the [PointerEvent] to embedder event created it.
+  ///
+  /// No two pointer events can have the same [embedderId]. This is different from
+  /// [pointerIdentifier] - used for hit-testing, whereas [embedderId] is used to
+  /// identify the platform event.
+  final int embedderId;
 
   /// Time of event dispatch, relative to an arbitrary timeline.
   final Duration timeStamp;
@@ -106,10 +194,16 @@ class PointerData {
   final PointerDeviceKind kind;
 
   /// The kind of signal for a pointer signal event.
-  final PointerSignalKind signalKind;
+  final PointerSignalKind? signalKind;
 
   /// Unique identifier for the pointing device, reused across interactions.
   final int device;
+
+  /// Unique identifier for the pointer.
+  ///
+  /// This field changes for each new pointer down event. Framework uses this
+  /// identifier to determine hit test result.
+  final int pointerIdentifier;
 
   /// X coordinate of the position of the pointer, in physical pixels in the
   /// global coordinate space.
@@ -118,6 +212,12 @@ class PointerData {
   /// Y coordinate of the position of the pointer, in physical pixels in the
   /// global coordinate space.
   final double physicalY;
+
+  /// The distance of pointer movement on X coordinate in physical pixels.
+  final double physicalDeltaX;
+
+  /// The distance of pointer movement on Y coordinate in physical pixels.
+  final double physicalDeltaY;
 
   /// Bit field using the *Button constants (primaryMouseButton,
   /// secondaryStylusButton, etc). For example, if this has the value 6 and the
@@ -129,6 +229,14 @@ class PointerData {
   /// obscuring this application's window. (Aspirational; not currently
   /// implemented.)
   final bool obscured;
+
+  /// Set if this pointer data was synthesized by pointer data packet converter.
+  /// pointer data packet converter will synthesize additional pointer datas if
+  /// the input sequence of pointer data is illegal.
+  ///
+  /// For example, a down pointer data will be synthesized if the converter receives
+  /// a move pointer data while the pointer is not previously down.
+  final bool synthesized;
 
   /// The pressure of the touch as a number ranging from 0.0, indicating a touch
   /// with no discernible pressure, to 1.0, indicating a touch with "normal"
@@ -231,20 +339,59 @@ class PointerData {
   /// The amount to scroll in the y direction, in physical pixels.
   final double scrollDeltaY;
 
+  /// For events with change of PointerChange.panZoomUpdate:
+  ///
+  /// The current panning magnitude of the pan/zoom in the x direction, in
+  /// physical pixels.
+  final double panX;
+
+  /// For events with change of PointerChange.panZoomUpdate:
+  ///
+  /// The current panning magnitude of the pan/zoom in the y direction, in
+  /// physical pixels.
+  final double panY;
+
+  /// For events with change of PointerChange.panZoomUpdate:
+  ///
+  /// The difference in panning of the pan/zoom in the x direction since the
+  /// latest panZoomUpdate event, in physical pixels.
+  final double panDeltaX;
+
+  /// For events with change of PointerChange.panZoomUpdate:
+  ///
+  /// The difference in panning of the pan/zoom in the y direction since the
+  /// last panZoomUpdate event, in physical pixels.
+  final double panDeltaY;
+
+  /// For events with change of PointerChange.panZoomUpdate:
+  ///
+  /// The current scale of the pan/zoom (unitless), with 1.0 as the initial scale.
+  final double scale;
+
+  /// For events with change of PointerChange.panZoomUpdate:
+  ///
+  /// The current angle of the pan/zoom in radians, with 0.0 as the initial angle.
+  final double rotation;
+
   @override
   String toString() => 'PointerData(x: $physicalX, y: $physicalY)';
 
   /// Returns a complete textual description of the information in this object.
   String toStringFull() {
     return '$runtimeType('
+             'embedderId: $embedderId, '
              'timeStamp: $timeStamp, '
              'change: $change, '
              'kind: $kind, '
              'signalKind: $signalKind, '
              'device: $device, '
+             'pointerIdentifier: $pointerIdentifier, '
              'physicalX: $physicalX, '
              'physicalY: $physicalY, '
+             'physicalDeltaX: $physicalDeltaX, '
+             'physicalDeltaY: $physicalDeltaY, '
              'buttons: $buttons, '
+             'synthesized: $synthesized, '
              'pressure: $pressure, '
              'pressureMin: $pressureMin, '
              'pressureMax: $pressureMax, '
@@ -259,7 +406,13 @@ class PointerData {
              'tilt: $tilt, '
              'platformData: $platformData, '
              'scrollDeltaX: $scrollDeltaX, '
-             'scrollDeltaY: $scrollDeltaY'
+             'scrollDeltaY: $scrollDeltaY, '
+             'panX: $panX, '
+             'panY: $panY, '
+             'panDeltaX: $panDeltaX, '
+             'panDeltaY: $panDeltaY, '
+             'scale: $scale, '
+             'rotation: $rotation'
            ')';
   }
 }
@@ -267,7 +420,7 @@ class PointerData {
 /// A sequence of reports about the state of pointers.
 class PointerDataPacket {
   /// Creates a packet of pointer data reports.
-  const PointerDataPacket({ this.data = const <PointerData>[] });
+  const PointerDataPacket({ this.data = const <PointerData>[] }) : assert(data != null);
 
   /// Data about the individual pointers in this packet.
   ///

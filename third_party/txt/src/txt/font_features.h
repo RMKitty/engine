@@ -31,8 +31,22 @@ class FontFeatures {
 
   std::string GetFeatureSettings() const;
 
+  const std::map<std::string, int>& GetFontFeatures() const;
+
  private:
   std::map<std::string, int> feature_map_;
+};
+
+// Axis tags and values that can be applied in a text style to control the
+// attributes of variable fonts.
+class FontVariations {
+ public:
+  void SetAxisValue(std::string tag, float value);
+
+  const std::map<std::string, float>& GetAxisValues() const;
+
+ private:
+  std::map<std::string, float> axis_map_;
 };
 
 }  // namespace txt

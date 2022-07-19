@@ -6,15 +6,16 @@
 #define TXT_PLATFORM_H_
 
 #include <string>
-#include "flutter/fml/macros.h"
+#include <vector>
 
+#include "flutter/fml/macros.h"
 #include "third_party/skia/include/core/SkFontMgr.h"
 
 namespace txt {
 
-std::string GetDefaultFontFamily();
+std::vector<std::string> GetDefaultFontFamilies();
 
-sk_sp<SkFontMgr> GetDefaultFontManager();
+sk_sp<SkFontMgr> GetDefaultFontManager(uint32_t font_initialization_data);
 
 }  // namespace txt
 

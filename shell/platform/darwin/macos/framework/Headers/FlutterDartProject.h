@@ -7,14 +7,14 @@
 
 #import <Foundation/Foundation.h>
 
-#include "FlutterMacros.h"
+#import "FlutterMacros.h"
 
 /**
  * A set of Flutter and Dart assets used by a `FlutterEngine` to initialize execution.
  *
  * TODO(stuartmorgan): Align API with FlutterDartProject, and combine.
  */
-FLUTTER_EXPORT
+FLUTTER_DARWIN_EXPORT
 @interface FlutterDartProject : NSObject
 
 /**
@@ -23,22 +23,28 @@ FLUTTER_EXPORT
  * The bundle must either contain a flutter_assets resource directory, or set the Info.plist key
  * FLTAssetsPath to override that name (if you are doing a custom build using a different name).
  *
- * @param bundle The bundle containing the Flutter assets directory. If nil, the main bundle is
- *               used.
+ * @param bundle The bundle containing the Flutter assets directory. If nil, the App framework
+ *               created by Flutter will be used.
  */
 - (nonnull instancetype)initWithPrecompiledDartBundle:(nullable NSBundle*)bundle
     NS_DESIGNATED_INITIALIZER;
 
 /**
- * Switches to pass to the Flutter engine. See
- * https://github.com/flutter/engine/blob/master/shell/common/switches.h
- * for details. Not all switches will apply to embedding mode. Switches have not stability
- * guarantee, and are subject to change without notice.
+ * If set, allows the Flutter project to use the dart:mirrors library.
  *
- * Note: This property WILL BE REMOVED in the future. If you use this property, please see
- * https://github.com/flutter/flutter/issue/38569.
+ * Deprecated: This function is temporary and will be removed in a future release.
  */
-@property(nullable) NSArray<NSString*>* engineSwitches;
+@property(nonatomic) bool enableMirrors;
+
+/**
+ * An NSArray of NSStrings to be passed as command line arguments to the Dart entrypoint.
+ *
+ * If this is not explicitly set, this will default to the contents of
+ * [NSProcessInfo arguments], without the binary name.
+ *
+ * Set this to nil to pass no arguments to the Dart entrypoint.
+ */
+@property(nonatomic, nullable) NSArray<NSString*>* dartEntrypointArguments;
 
 @end
 

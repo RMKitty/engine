@@ -4,33 +4,24 @@
 
 #include "flutter/lib/ui/painting/engine_layer.h"
 
-#include "flutter/flow/layers/container_layer.h"
-
+#include "flutter/lib/ui/ui_dart_state.h"
 #include "third_party/tonic/converter/dart_converter.h"
 #include "third_party/tonic/dart_args.h"
 #include "third_party/tonic/dart_binding_macros.h"
 #include "third_party/tonic/dart_library_natives.h"
 
-using tonic::ToDart;
-
 namespace flutter {
+
+IMPLEMENT_WRAPPERTYPEINFO(ui, EngineLayer);
 
 EngineLayer::EngineLayer(std::shared_ptr<flutter::ContainerLayer> layer)
     : layer_(layer) {}
 
 EngineLayer::~EngineLayer() = default;
 
-size_t EngineLayer::GetAllocationSize() {
-  // Provide an approximation of the total memory impact of this object to the
-  // Dart GC.  The ContainerLayer may hold references to a tree of other layers,
-  // which in turn may contain Skia objects.
-  return 3000;
-};
-
-IMPLEMENT_WRAPPERTYPEINFO(ui, EngineLayer);
-
-#define FOR_EACH_BINDING(V)  // nothing to bind
-
-DART_BIND_ALL(EngineLayer, FOR_EACH_BINDING)
+void EngineLayer::dispose() {
+  layer_.reset();
+  ClearDartWrapper();
+}
 
 }  // namespace flutter

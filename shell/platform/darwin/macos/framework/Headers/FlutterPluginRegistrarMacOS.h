@@ -4,11 +4,12 @@
 
 #import <Cocoa/Cocoa.h>
 
-#import "FlutterPluginMacOS.h"
-
 #import "FlutterBinaryMessenger.h"
 #import "FlutterChannels.h"
 #import "FlutterMacros.h"
+#import "FlutterPlatformViews.h"
+#import "FlutterPluginMacOS.h"
+#import "FlutterTexture.h"
 
 // TODO: Merge this file and FlutterPluginMacOS.h with the iOS FlutterPlugin.h, sharing all but
 // the platform-specific methods.
@@ -20,13 +21,19 @@
  * Currently the macOS PluginRegistrar has very limited functionality, but is expected to expand
  * over time to more closely match the functionality of FlutterPluginRegistrar.
  */
-FLUTTER_EXPORT
+FLUTTER_DARWIN_EXPORT
 @protocol FlutterPluginRegistrar <NSObject>
 
 /**
  * The binary messenger used for creating channels to communicate with the Flutter engine.
  */
 @property(nonnull, readonly) id<FlutterBinaryMessenger> messenger;
+
+/**
+ * Returns a `FlutterTextureRegistry` for registering textures
+ * provided by the plugin.
+ */
+@property(nonnull, readonly) id<FlutterTextureRegistry> textures;
 
 /**
  * The view displaying Flutter content. May return |nil|, for instance in a headless environment.
@@ -41,6 +48,18 @@ FLUTTER_EXPORT
  */
 - (void)addMethodCallDelegate:(nonnull id<FlutterPlugin>)delegate
                       channel:(nonnull FlutterMethodChannel*)channel;
+
+/**
+ * Registers a `FlutterPlatformViewFactory` for creation of platform views.
+ *
+ * Plugins expose `NSView` for embedding in Flutter apps by registering a view factory.
+ *
+ * @param factory The view factory that will be registered.
+ * @param factoryId A unique identifier for the factory, the Dart code of the Flutter app can use
+ *   this identifier to request creation of a `NSView` by the registered factory.
+ */
+- (void)registerViewFactory:(nonnull NSObject<FlutterPlatformViewFactory>*)factory
+                     withId:(nonnull NSString*)factoryId;
 
 @end
 

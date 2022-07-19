@@ -6,22 +6,26 @@
 
 #include "flutter/shell/platform/android/flutter_main.h"
 
+#include <android/log.h>
+
+#include <optional>
 #include <vector>
 
 #include "flutter/fml/command_line.h"
 #include "flutter/fml/file.h"
 #include "flutter/fml/macros.h"
 #include "flutter/fml/message_loop.h"
+#include "flutter/fml/native_library.h"
 #include "flutter/fml/paths.h"
 #include "flutter/fml/platform/android/jni_util.h"
 #include "flutter/fml/platform/android/paths_android.h"
 #include "flutter/fml/size.h"
 #include "flutter/lib/ui/plugins/callback_cache.h"
 #include "flutter/runtime/dart_vm.h"
-#include "flutter/runtime/start_up.h"
 #include "flutter/shell/common/shell.h"
 #include "flutter/shell/common/switches.h"
 #include "third_party/dart/runtime/include/dart_tools_api.h"
+#include "third_party/skia/include/core/SkFontMgr.h"
 
 namespace flutter {
 
@@ -34,6 +38,21 @@ extern const intptr_t kPlatformStrongDillSize;
 }
 
 namespace {
+
+// This is only available on API 23+, so dynamically look it up.
+// This method is only called once at shell creation.
+// Do this in C++ because the API is available at level 23 here, but only 29+ in
+// Java.
+bool IsATraceEnabled() {
+  auto libandroid = fml::NativeLibrary::Create("libandroid.so");
+  FML_CHECK(libandroid);
+  auto atrace_fn =
+      libandroid->ResolveFunction<bool (*)(void)>("ATrace_isEnabled");
+  if (atrace_fn) {
+    return atrace_fn.value()();
+  }
+  return false;
+}
 
 fml::jni::ScopedJavaGlobalRef<jclass>* g_flutter_jni_class = nullptr;
 
@@ -62,7 +81,8 @@ void FlutterMain::Init(JNIEnv* env,
                        jobjectArray jargs,
                        jstring kernelPath,
                        jstring appStoragePath,
-                       jstring engineCachesPath) {
+                       jstring engineCachesPath,
+                       jlong initTimeMillis) {
   std::vector<std::string> args;
   args.push_back("flutter");
   for (auto& arg : fml::jni::StringArrayToVector(env, jargs)) {
@@ -71,6 +91,29 @@ void FlutterMain::Init(JNIEnv* env,
   auto command_line = fml::CommandLineFromIterators(args.begin(), args.end());
 
   auto settings = SettingsFromCommandLine(command_line);
+
+  // Turn systracing on if ATrace_isEnabled is true and the user did not already
+  // request systracing
+  if (!settings.trace_systrace) {
+    settings.trace_systrace = IsATraceEnabled();
+    if (settings.trace_systrace) {
+      __android_log_print(
+          ANDROID_LOG_INFO, "Flutter",
+          "ATrace was enabled at startup. Flutter and Dart "
+          "tracing will be forwarded to systrace and will not show up in the "
+          "Observatory timeline or Dart DevTools.");
+    }
+  }
+
+#if FLUTTER_RELEASE
+  // On most platforms the timeline is always disabled in release mode.
+  // On Android, enable it in release mode only when using systrace.
+  settings.enable_timeline_event_handler = settings.trace_systrace;
+#endif  // FLUTTER_RELEASE
+
+  int64_t init_time_micros = initTimeMillis * 1000;
+  settings.engine_start_timestamp =
+      std::chrono::microseconds(Dart_TimelineGetMicros() - init_time_micros);
 
   // Restore the callback cache.
   // TODO(chinmaygarde): Route all cache file access through FML and remove this
@@ -100,6 +143,12 @@ void FlutterMain::Init(JNIEnv* env,
 
   settings.task_observer_remove = [](intptr_t key) {
     fml::MessageLoop::GetCurrent().RemoveTaskObserver(key);
+  };
+
+  settings.log_message_callback = [](const std::string& tag,
+                                     const std::string& message) {
+    __android_log_print(ANDROID_LOG_INFO, tag.c_str(), "%.*s",
+                        (int)message.size(), message.c_str());
   };
 
 #if FLUTTER_RUNTIME_MODE == FLUTTER_RUNTIME_MODE_DEBUG
@@ -151,12 +200,9 @@ void FlutterMain::SetupObservatoryUriCallback(JNIEnv* env) {
       });
 }
 
-static void RecordStartTimestamp(JNIEnv* env,
-                                 jclass jcaller,
-                                 jlong initTimeMillis) {
-  int64_t initTimeMicros =
-      static_cast<int64_t>(initTimeMillis) * static_cast<int64_t>(1000);
-  flutter::engine_main_enter_ts = Dart_TimelineGetMicros() - initTimeMicros;
+static void PrefetchDefaultFontManager(JNIEnv* env, jclass jcaller) {
+  // Initialize a singleton owned by Skia.
+  SkFontMgr::RefDefault();
 }
 
 bool FlutterMain::Register(JNIEnv* env) {
@@ -164,13 +210,13 @@ bool FlutterMain::Register(JNIEnv* env) {
       {
           .name = "nativeInit",
           .signature = "(Landroid/content/Context;[Ljava/lang/String;Ljava/"
-                       "lang/String;Ljava/lang/String;Ljava/lang/String;)V",
+                       "lang/String;Ljava/lang/String;Ljava/lang/String;J)V",
           .fnPtr = reinterpret_cast<void*>(&Init),
       },
       {
-          .name = "nativeRecordStartTimestamp",
-          .signature = "(J)V",
-          .fnPtr = reinterpret_cast<void*>(&RecordStartTimestamp),
+          .name = "nativePrefetchDefaultFontManager",
+          .signature = "()V",
+          .fnPtr = reinterpret_cast<void*>(&PrefetchDefaultFontManager),
       },
   };
 

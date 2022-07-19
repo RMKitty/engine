@@ -2,13 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "flutter/vulkan/vulkan_debug_report.h"
+#include "vulkan_debug_report.h"
 
+#include <algorithm>
 #include <iomanip>
 #include <vector>
 
 #include "flutter/fml/compiler_specific.h"
-#include "flutter/vulkan/vulkan_utilities.h"
+#include "vulkan_utilities.h"
 
 namespace vulkan {
 
@@ -107,14 +108,17 @@ static const char* VkDebugReportObjectTypeEXTToString(
 }
 
 static VKAPI_ATTR VkBool32
-OnVulkanDebugReportCallback(VkDebugReportFlagsEXT flags,
-                            VkDebugReportObjectTypeEXT object_type,
-                            uint64_t object,
-                            size_t location,
-                            int32_t message_code,
-                            const char* layer_prefix,
-                            const char* message,
-                            void* user_data) {
+#ifdef WIN32
+    __stdcall
+#endif
+    OnVulkanDebugReportCallback(VkDebugReportFlagsEXT flags,
+                                VkDebugReportObjectTypeEXT object_type,
+                                uint64_t object,
+                                size_t location,
+                                int32_t message_code,
+                                const char* layer_prefix,
+                                const char* message,
+                                void* user_data) {
   std::vector<std::pair<std::string, std::string>> items;
 
   items.emplace_back("Severity", VkDebugReportFlagsEXTToString(flags));
@@ -182,8 +186,7 @@ VulkanDebugReport::VulkanDebugReport(
     const VulkanProcTable& p_vk,
     const VulkanHandle<VkInstance>& application)
     : vk(p_vk), application_(application), valid_(false) {
-  if (!IsDebuggingEnabled() || !vk.CreateDebugReportCallbackEXT ||
-      !vk.DestroyDebugReportCallbackEXT) {
+  if (!vk.CreateDebugReportCallbackEXT || !vk.DestroyDebugReportCallbackEXT) {
     return;
   }
 
@@ -192,8 +195,9 @@ VulkanDebugReport::VulkanDebugReport(
   }
 
   VkDebugReportFlagsEXT flags = kVulkanErrorFlags;
-  if (ValidationLayerInfoMessagesEnabled())
+  if (ValidationLayerInfoMessagesEnabled()) {
     flags |= kVulkanInfoFlags;
+  }
   const VkDebugReportCallbackCreateInfoEXT create_info = {
       .sType = VK_STRUCTURE_TYPE_DEBUG_REPORT_CREATE_INFO_EXT,
       .pNext = nullptr,
@@ -208,9 +212,10 @@ VulkanDebugReport::VulkanDebugReport(
     return;
   }
 
-  handle_ = {handle, [this](VkDebugReportCallbackEXT handle) {
-               vk.DestroyDebugReportCallbackEXT(application_, handle, nullptr);
-             }};
+  handle_ = VulkanHandle<VkDebugReportCallbackEXT>{
+      handle, [this](VkDebugReportCallbackEXT handle) {
+        vk.DestroyDebugReportCallbackEXT(application_, handle, nullptr);
+      }};
 
   valid_ = true;
 }

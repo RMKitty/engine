@@ -5,15 +5,17 @@
 #include "flutter/shell/platform/embedder/embedder_surface_software.h"
 
 #include "flutter/fml/trace_event.h"
-#include "third_party/skia/include/gpu/GrContext.h"
+#include "third_party/skia/include/core/SkColorSpace.h"
+#include "third_party/skia/include/core/SkImageInfo.h"
+#include "third_party/skia/include/gpu/GrDirectContext.h"
 
 namespace flutter {
 
 EmbedderSurfaceSoftware::EmbedderSurfaceSoftware(
     SoftwareDispatchTable software_dispatch_table,
-    std::unique_ptr<EmbedderExternalViewEmbedder> external_view_embedder)
+    std::shared_ptr<EmbedderExternalViewEmbedder> external_view_embedder)
     : software_dispatch_table_(software_dispatch_table),
-      external_view_embedder_(std::move(external_view_embedder)) {
+      external_view_embedder_(external_view_embedder) {
   if (!software_dispatch_table_.software_present_backing_store) {
     return;
   }
@@ -32,8 +34,8 @@ std::unique_ptr<Surface> EmbedderSurfaceSoftware::CreateGPUSurface() {
   if (!IsValid()) {
     return nullptr;
   }
-
-  auto surface = std::make_unique<GPUSurfaceSoftware>(this);
+  const bool render_to_surface = !external_view_embedder_;
+  auto surface = std::make_unique<GPUSurfaceSoftware>(this, render_to_surface);
 
   if (!surface->IsValid()) {
     return nullptr;
@@ -43,7 +45,7 @@ std::unique_ptr<Surface> EmbedderSurfaceSoftware::CreateGPUSurface() {
 }
 
 // |EmbedderSurface|
-sk_sp<GrContext> EmbedderSurfaceSoftware::CreateResourceContext() const {
+sk_sp<GrDirectContext> EmbedderSurfaceSoftware::CreateResourceContext() const {
   return nullptr;
 }
 
@@ -104,11 +106,6 @@ bool EmbedderSurfaceSoftware::PresentBackingStore(
       pixmap.rowBytes(),  //
       pixmap.height()     //
   );
-}
-
-// |GPUSurfaceSoftwareDelegate|
-ExternalViewEmbedder* EmbedderSurfaceSoftware::GetExternalViewEmbedder() {
-  return external_view_embedder_.get();
 }
 
 }  // namespace flutter

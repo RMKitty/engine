@@ -5,25 +5,35 @@
 #ifndef COMMON_PLATFORM_VIEW_H_
 #define COMMON_PLATFORM_VIEW_H_
 
+#include <functional>
 #include <memory>
 
+#include "flutter/common/graphics/texture.h"
 #include "flutter/common/task_runners.h"
-#include "flutter/flow/texture.h"
+#include "flutter/flow/embedded_views.h"
+#include "flutter/flow/surface.h"
 #include "flutter/fml/macros.h"
+#include "flutter/fml/mapping.h"
 #include "flutter/fml/memory/weak_ptr.h"
 #include "flutter/lib/ui/semantics/custom_accessibility_action.h"
 #include "flutter/lib/ui/semantics/semantics_node.h"
+#include "flutter/lib/ui/window/key_data_packet.h"
 #include "flutter/lib/ui/window/platform_message.h"
 #include "flutter/lib/ui/window/pointer_data_packet.h"
+#include "flutter/lib/ui/window/pointer_data_packet_converter.h"
 #include "flutter/lib/ui/window/viewport_metrics.h"
-#include "flutter/shell/common/surface.h"
+#include "flutter/shell/common/platform_message_handler.h"
+#include "flutter/shell/common/pointer_data_dispatcher.h"
 #include "flutter/shell/common/vsync_waiter.h"
-#include "third_party/skia/include/core/SkSize.h"
-#include "third_party/skia/include/gpu/GrContext.h"
+#include "third_party/skia/include/gpu/GrDirectContext.h"
+
+namespace impeller {
+
+class Context;
+
+}  // namespace impeller
 
 namespace flutter {
-
-class Shell;
 
 //------------------------------------------------------------------------------
 /// @brief      Platform views are created by the shell on the platform task
@@ -48,14 +58,15 @@ class PlatformView {
   ///
   class Delegate {
    public:
+    using KeyDataResponse = std::function<void(bool)>;
     //--------------------------------------------------------------------------
     /// @brief      Notifies the delegate that the platform view was created
     ///             with the given render surface. This surface is platform
     ///             (iOS, Android) and client-rendering API (OpenGL, Software,
     ///             Metal, Vulkan) specific. This is usually a sign to the
-    ///             rasterizer to setup and begin rendering to that surface.
+    ///             rasterizer to set up and begin rendering to that surface.
     ///
-    /// @param[in]  surface  The surface
+    /// @param[in]  surface           The surface
     ///
     virtual void OnPlatformViewCreated(std::unique_ptr<Surface> surface) = 0;
 
@@ -66,6 +77,12 @@ class PlatformView {
     ///             intermediate resources.
     ///
     virtual void OnPlatformViewDestroyed() = 0;
+
+    //--------------------------------------------------------------------------
+    /// @brief      Notifies the delegate that the platform needs to schedule a
+    ///             frame to regenerate the layer tree and redraw the surface.
+    ///
+    virtual void OnPlatformViewScheduleFrame() = 0;
 
     //--------------------------------------------------------------------------
     /// @brief      Notifies the delegate that the specified callback needs to
@@ -83,7 +100,8 @@ class PlatformView {
     ///
     /// @param[in]  closure  The callback to execute on the next frame.
     ///
-    virtual void OnPlatformViewSetNextFrameCallback(fml::closure closure) = 0;
+    virtual void OnPlatformViewSetNextFrameCallback(
+        const fml::closure& closure) = 0;
 
     //--------------------------------------------------------------------------
     /// @brief      Notifies the delegate the viewport metrics of the platform
@@ -106,7 +124,7 @@ class PlatformView {
     ///                      root isolate.
     ///
     virtual void OnPlatformViewDispatchPlatformMessage(
-        fml::RefPtr<PlatformMessage> message) = 0;
+        std::unique_ptr<PlatformMessage> message) = 0;
 
     //--------------------------------------------------------------------------
     /// @brief      Notifies the delegate that the platform view has encountered
@@ -135,7 +153,7 @@ class PlatformView {
     virtual void OnPlatformViewDispatchSemanticsAction(
         int32_t id,
         SemanticsAction action,
-        std::vector<uint8_t> args) = 0;
+        fml::MallocMapping args) = 0;
 
     //--------------------------------------------------------------------------
     /// @brief      Notifies the delegate that the embedder has expressed an
@@ -169,7 +187,7 @@ class PlatformView {
     ///             Flutter layer tree. All textures must have a unique
     ///             identifier. When the rasterizer encounters an external
     ///             texture within its hierarchy, it gives the embedder a chance
-    ///             to update that texture on the GPU thread before it
+    ///             to update that texture on the raster thread before it
     ///             composites the same on-screen.
     ///
     /// @param[in]  texture  The texture that is being updated by the embedder
@@ -206,6 +224,105 @@ class PlatformView {
     ///
     virtual void OnPlatformViewMarkTextureFrameAvailable(
         int64_t texture_id) = 0;
+
+    //--------------------------------------------------------------------------
+    /// @brief      Loads the dart shared library into the dart VM. When the
+    ///             dart library is loaded successfully, the dart future
+    ///             returned by the originating loadLibrary() call completes.
+    ///
+    ///             The Dart compiler may generate separate shared libraries
+    ///             files called 'loading units' when libraries are imported
+    ///             as deferred. Each of these shared libraries are identified
+    ///             by a unique loading unit id. Callers should open and resolve
+    ///             a SymbolMapping from the shared library. The Mappings should
+    ///             be moved into this method, as ownership will be assumed by
+    ///             the dart root isolate after successful loading and released
+    ///             after shutdown of the root isolate. The loading unit may not
+    ///             be used after isolate shutdown. If loading fails, the
+    ///             mappings will be released.
+    ///
+    ///             This method is paired with a RequestDartDeferredLibrary
+    ///             invocation that provides the embedder with the loading unit
+    ///             id of the deferred library to load.
+    ///
+    ///
+    /// @param[in]  loading_unit_id  The unique id of the deferred library's
+    ///                              loading unit.
+    ///
+    /// @param[in]  snapshot_data    Dart snapshot data of the loading unit's
+    ///                              shared library.
+    ///
+    /// @param[in]  snapshot_data    Dart snapshot instructions of the loading
+    ///                              unit's shared library.
+    ///
+    virtual void LoadDartDeferredLibrary(
+        intptr_t loading_unit_id,
+        std::unique_ptr<const fml::Mapping> snapshot_data,
+        std::unique_ptr<const fml::Mapping> snapshot_instructions) = 0;
+
+    //--------------------------------------------------------------------------
+    /// @brief      Indicates to the dart VM that the request to load a deferred
+    ///             library with the specified loading unit id has failed.
+    ///
+    ///             The dart future returned by the initiating loadLibrary()
+    ///             call will complete with an error.
+    ///
+    /// @param[in]  loading_unit_id  The unique id of the deferred library's
+    ///                              loading unit, as passed in by
+    ///                              RequestDartDeferredLibrary.
+    ///
+    /// @param[in]  error_message    The error message that will appear in the
+    ///                              dart Future.
+    ///
+    /// @param[in]  transient        A transient error is a failure due to
+    ///                              temporary conditions such as no network.
+    ///                              Transient errors allow the dart VM to
+    ///                              re-request the same deferred library and
+    ///                              and loading_unit_id again. Non-transient
+    ///                              errors are permanent and attempts to
+    ///                              re-request the library will instantly
+    ///                              complete with an error.
+    virtual void LoadDartDeferredLibraryError(intptr_t loading_unit_id,
+                                              const std::string error_message,
+                                              bool transient) = 0;
+
+    //--------------------------------------------------------------------------
+    /// @brief      Replaces the asset resolver handled by the engine's
+    ///             AssetManager of the specified `type` with
+    ///             `updated_asset_resolver`. The matching AssetResolver is
+    ///             removed and replaced with `updated_asset_resolvers`.
+    ///
+    ///             AssetResolvers should be updated when the existing resolver
+    ///             becomes obsolete and a newer one becomes available that
+    ///             provides updated access to the same type of assets as the
+    ///             existing one. This update process is meant to be performed
+    ///             at runtime.
+    ///
+    ///             If a null resolver is provided, nothing will be done. If no
+    ///             matching resolver is found, the provided resolver will be
+    ///             added to the end of the AssetManager resolvers queue. The
+    ///             replacement only occurs with the first matching resolver.
+    ///             Any additional matching resolvers are untouched.
+    ///
+    /// @param[in]  updated_asset_resolver  The asset resolver to replace the
+    ///             resolver of matching type with.
+    ///
+    /// @param[in]  type  The type of AssetResolver to update. Only resolvers of
+    ///                   the specified type will be replaced by the updated
+    ///                   resolver.
+    ///
+    virtual void UpdateAssetResolverByType(
+        std::unique_ptr<AssetResolver> updated_asset_resolver,
+        AssetResolver::AssetResolverType type) = 0;
+
+    //--------------------------------------------------------------------------
+    /// @brief      Called by the platform view on the platform thread to get
+    ///             the settings object associated with the platform view
+    ///             instance.
+    ///
+    /// @return     The settings.
+    ///
+    virtual const Settings& OnPlatformViewGetSettings() const = 0;
   };
 
   //----------------------------------------------------------------------------
@@ -267,7 +384,7 @@ class PlatformView {
   ///
   /// @param[in]  message  The platform message to deliver to the root isolate.
   ///
-  void DispatchPlatformMessage(fml::RefPtr<PlatformMessage> message);
+  void DispatchPlatformMessage(std::unique_ptr<PlatformMessage> message);
 
   //----------------------------------------------------------------------------
   /// @brief      Overridden by embedders to perform actions in response to
@@ -279,11 +396,11 @@ class PlatformView {
   ///             may use the `DispatchPlatformMessage` method. This method is
   ///             for messages that go the other way.
   ///
-  /// @see        DisplatchPlatformMessage()
+  /// @see        DispatchPlatformMessage()
   ///
   /// @param[in]  message  The message
   ///
-  virtual void HandlePlatformMessage(fml::RefPtr<PlatformMessage> message);
+  virtual void HandlePlatformMessage(std::unique_ptr<PlatformMessage> message);
 
   //----------------------------------------------------------------------------
   /// @brief      Used by embedders to dispatch an accessibility action to a
@@ -296,7 +413,7 @@ class PlatformView {
   ///
   void DispatchSemanticsAction(int32_t id,
                                SemanticsAction action,
-                               std::vector<uint8_t> args);
+                               fml::MallocMapping args);
 
   //----------------------------------------------------------------------------
   /// @brief      Used by embedder to notify the running isolate hosted by the
@@ -349,10 +466,11 @@ class PlatformView {
 
   //----------------------------------------------------------------------------
   /// @brief      Used by embedders to specify the updated viewport metrics. In
-  ///             response to this call, on the GPU thread, the rasterizer may
-  ///             need to be reconfigured to the updated viewport dimensions. On
-  ///             the UI thread, the framework may need to start generating a
-  ///             new frame for the updated viewport metrics as well.
+  ///             response to this call, on the raster thread, the rasterizer
+  ///             may need to be reconfigured to the updated viewport
+  ///             dimensions. On the UI thread, the framework may need to start
+  ///             generating a new frame for the updated viewport metrics as
+  ///             well.
   ///
   /// @param[in]  metrics  The updated viewport metrics.
   ///
@@ -381,6 +499,12 @@ class PlatformView {
   virtual void NotifyDestroyed();
 
   //----------------------------------------------------------------------------
+  /// @brief      Used by embedders to schedule a frame. In response to this
+  ///             call, the framework may need to start generating a new frame.
+  ///
+  void ScheduleFrame();
+
+  //----------------------------------------------------------------------------
   /// @brief      Used by the shell to obtain a Skia GPU context that is capable
   ///             of operating on the IO thread. The context must be in the same
   ///             share-group as the Skia GPU context used on the render thread.
@@ -404,31 +528,39 @@ class PlatformView {
   ///             main render thread GPU context. May be `nullptr` in case such
   ///             a context cannot be created.
   ///
-  virtual sk_sp<GrContext> CreateResourceContext() const;
+  virtual sk_sp<GrDirectContext> CreateResourceContext() const;
+
+  virtual std::shared_ptr<impeller::Context> GetImpellerContext() const;
 
   //----------------------------------------------------------------------------
   /// @brief      Used by the shell to notify the embedder that the resource
   ///             context previously obtained via a call to
-  ///             `CreateResourceContext()` is being collected. The embedder is
-  ///             free to collect an platform specific resources associated with
-  ///             this context.
+  ///             `CreateResourceContext()` is being collected. The embedder
+  ///             is free to collect an platform specific resources
+  ///             associated with this context.
   ///
   /// @attention  Unlike all other methods on the platform view, this will be
   ///             called on IO task runner.
   ///
   virtual void ReleaseResourceContext() const;
 
+  //--------------------------------------------------------------------------
+  /// @brief      Returns a platform-specific PointerDataDispatcherMaker so the
+  ///             `Engine` can construct the PointerDataPacketDispatcher based
+  ///             on platforms.
+  virtual PointerDataDispatcherMaker GetDispatcherMaker();
+
   //----------------------------------------------------------------------------
   /// @brief      Returns a weak pointer to the platform view. Since the
-  ///             platform view may only be created, accessed and destroyed on
-  ///             the platform thread, any access to the platform view from a
-  ///             non-platform task runner needs a weak pointer to the platform
-  ///             view along with a reference to the platform task runner. A
-  ///             task must be posted to the platform task runner with the weak
-  ///             pointer captured in the same. The platform view method may
-  ///             only be called in the posted task once the weak pointer
-  ///             validity has been checked. This method is used by callers to
-  ///             obtain that weak pointer.
+  ///             platform view may only be created, accessed and destroyed
+  ///             on the platform thread, any access to the platform view
+  ///             from a non-platform task runner needs a weak pointer to
+  ///             the platform view along with a reference to the platform
+  ///             task runner. A task must be posted to the platform task
+  ///             runner with the weak pointer captured in the same. The
+  ///             platform view method may only be called in the posted task
+  ///             once the weak pointer validity has been checked. This
+  ///             method is used by callers to obtain that weak pointer.
   ///
   /// @return     The weak pointer to the platform view.
   ///
@@ -446,13 +578,14 @@ class PlatformView {
 
   //----------------------------------------------------------------------------
   /// @brief      Sets a callback that gets executed when the rasterizer renders
-  ///             the next frame. Due to the asynchronous nature of rendering in
-  ///             Flutter, embedders usually add a placeholder over the
-  ///             contents in which Flutter is going to render when Flutter is
-  ///             first initialized. This callback may be used as a signal to
-  ///             remove that placeholder. The callback is executed on the
-  ///             render task runner and not the platform task runner. It is
-  ///             the embedder's responsibility to re-thread as necessary.
+  ///             the next frame. Due to the asynchronous nature of
+  ///             rendering in Flutter, embedders usually add a placeholder
+  ///             over the contents in which Flutter is going to render when
+  ///             Flutter is first initialized. This callback may be used as
+  ///             a signal to remove that placeholder. The callback is
+  ///             executed on the render task runner and not the platform
+  ///             task runner. It is the embedder's responsibility to
+  ///             re-thread as necessary.
   ///
   /// @attention  The callback is executed on the render task runner and not the
   ///             platform task runner. Embedders must re-thread as necessary.
@@ -460,13 +593,13 @@ class PlatformView {
   /// @param[in]  closure  The callback to execute on the render thread when the
   ///                      next frame gets rendered.
   ///
-  void SetNextFrameCallback(fml::closure closure);
+  void SetNextFrameCallback(const fml::closure& closure);
 
   //----------------------------------------------------------------------------
   /// @brief      Dispatches pointer events from the embedder to the
   ///             framework. Each pointer data packet may contain multiple
-  ///             pointer input events. Each call to this method wakes up the UI
-  ///             thread.
+  ///             pointer input events. Each call to this method wakes up
+  ///             the UI thread.
   ///
   /// @param[in]  packet  The pointer data packet to dispatch to the framework.
   ///
@@ -475,16 +608,17 @@ class PlatformView {
   //--------------------------------------------------------------------------
   /// @brief      Used by the embedder to specify a texture that it wants the
   ///             rasterizer to composite within the Flutter layer tree. All
-  ///             textures must have a unique identifier. When the rasterizer
-  ///             encounters an external texture within its hierarchy, it gives
-  ///             the embedder a chance to update that texture on the GPU thread
-  ///             before it composites the same on-screen.
+  ///             textures must have a unique identifier. When the
+  ///             rasterizer encounters an external texture within its
+  ///             hierarchy, it gives the embedder a chance to update that
+  ///             texture on the raster thread before it composites the same
+  ///             on-screen.
   ///
   /// @attention  This method must only be called once per texture. When the
-  ///             texture is updated, calling `MarkTextureFrameAvailable` with
-  ///             the specified texture identifier is sufficient to make Flutter
-  ///             re-render the frame with the updated texture composited
-  ///             in-line.
+  ///             texture is updated, calling `MarkTextureFrameAvailable`
+  ///             with the specified texture identifier is sufficient to
+  ///             make Flutter re-render the frame with the updated texture
+  ///             composited in-line.
   ///
   /// @see        UnregisterTexture, MarkTextureFrameAvailable
   ///
@@ -494,10 +628,10 @@ class PlatformView {
   void RegisterTexture(std::shared_ptr<flutter::Texture> texture);
 
   //--------------------------------------------------------------------------
-  /// @brief      Used by the embedder to notify the rasterizer that it will no
-  ///             longer attempt to composite the specified texture within the
-  ///             layer tree. This allows the rasterizer to collect associated
-  ///             resources.
+  /// @brief      Used by the embedder to notify the rasterizer that it will
+  ///             no longer attempt to composite the specified texture within
+  ///             the layer tree. This allows the rasterizer to collect
+  ///             associated resources.
   ///
   /// @attention  This call must only be called once per texture identifier.
   ///
@@ -514,13 +648,14 @@ class PlatformView {
   ///             of the previously registered texture have been updated.
   ///             Typically, Flutter will only render a frame if there is an
   ///             updated layer tree. However, in cases where the layer tree
-  ///             is static but one of the externally composited textures has
-  ///             been updated by the embedder, the embedder needs to notify
-  ///             the rasterizer to render a new frame. In such cases, the
-  ///             existing layer tree may be reused with the frame re-composited
-  ///             with all updated external textures. Unlike the calls to
-  ///             register and unregister the texture, this call must be made
-  ///             each time a new texture frame is available.
+  ///             is static but one of the externally composited textures
+  ///             has been updated by the embedder, the embedder needs to
+  ///             notify the rasterizer to render a new frame. In such
+  ///             cases, the existing layer tree may be reused with the
+  ///             frame re-composited with all updated external textures.
+  ///             Unlike the calls to register and unregister the texture,
+  ///             this call must be made each time a new texture frame is
+  ///             available.
   ///
   /// @see        RegisterTexture, UnregisterTexture
   ///
@@ -529,16 +664,181 @@ class PlatformView {
   ///
   void MarkTextureFrameAvailable(int64_t texture_id);
 
+  //--------------------------------------------------------------------------
+  /// @brief      Directly invokes platform-specific APIs to compute the
+  ///             locale the platform would have natively resolved to.
+  ///
+  /// @param[in]  supported_locale_data  The vector of strings that represents
+  ///                                    the locales supported by the app.
+  ///                                    Each locale consists of three
+  ///                                    strings: languageCode, countryCode,
+  ///                                    and scriptCode in that order.
+  ///
+  /// @return     A vector of 3 strings languageCode, countryCode, and
+  ///             scriptCode that represents the locale selected by the
+  ///             platform. Empty strings mean the value was unassigned. Empty
+  ///             vector represents a null locale.
+  ///
+  virtual std::unique_ptr<std::vector<std::string>>
+  ComputePlatformResolvedLocales(
+      const std::vector<std::string>& supported_locale_data);
+
+  virtual std::shared_ptr<ExternalViewEmbedder> CreateExternalViewEmbedder();
+
+  //--------------------------------------------------------------------------
+  /// @brief      Invoked when the dart VM requests that a deferred library
+  ///             be loaded. Notifies the engine that the deferred library
+  ///             identified by the specified loading unit id should be
+  ///             downloaded and loaded into the Dart VM via
+  ///             `LoadDartDeferredLibrary`
+  ///
+  ///             Upon encountering errors or otherwise failing to load a
+  ///             loading unit with the specified id, the failure should be
+  ///             directly reported to dart by calling
+  ///             `LoadDartDeferredLibraryFailure` to ensure the waiting dart
+  ///             future completes with an error.
+  ///
+  /// @param[in]  loading_unit_id  The unique id of the deferred library's
+  ///                              loading unit. This id is to be passed
+  ///                              back into LoadDartDeferredLibrary
+  ///                              in order to identify which deferred
+  ///                              library to load.
+  ///
+  virtual void RequestDartDeferredLibrary(intptr_t loading_unit_id);
+
+  //--------------------------------------------------------------------------
+  /// @brief      Loads the Dart shared library into the Dart VM. When the
+  ///             Dart library is loaded successfully, the Dart future
+  ///             returned by the originating loadLibrary() call completes.
+  ///
+  ///             The Dart compiler may generate separate shared libraries
+  ///             files called 'loading units' when libraries are imported
+  ///             as deferred. Each of these shared libraries are identified
+  ///             by a unique loading unit id. Callers should open and resolve
+  ///             a SymbolMapping from the shared library. The Mappings should
+  ///             be moved into this method, as ownership will be assumed by the
+  ///             dart isolate after successful loading and released after
+  ///             shutdown of the dart isolate. If loading fails, the mappings
+  ///             will naturally go out of scope.
+  ///
+  ///             This method is paired with a RequestDartDeferredLibrary
+  ///             invocation that provides the embedder with the loading unit id
+  ///             of the deferred library to load.
+  ///
+  ///
+  /// @param[in]  loading_unit_id  The unique id of the deferred library's
+  ///                              loading unit, as passed in by
+  ///                              RequestDartDeferredLibrary.
+  ///
+  /// @param[in]  snapshot_data    Dart snapshot data of the loading unit's
+  ///                              shared library.
+  ///
+  /// @param[in]  snapshot_data    Dart snapshot instructions of the loading
+  ///                              unit's shared library.
+  ///
+  virtual void LoadDartDeferredLibrary(
+      intptr_t loading_unit_id,
+      std::unique_ptr<const fml::Mapping> snapshot_data,
+      std::unique_ptr<const fml::Mapping> snapshot_instructions);
+
+  //--------------------------------------------------------------------------
+  /// @brief      Indicates to the dart VM that the request to load a deferred
+  ///             library with the specified loading unit id has failed.
+  ///
+  ///             The dart future returned by the initiating loadLibrary() call
+  ///             will complete with an error.
+  ///
+  /// @param[in]  loading_unit_id  The unique id of the deferred library's
+  ///                              loading unit, as passed in by
+  ///                              RequestDartDeferredLibrary.
+  ///
+  /// @param[in]  error_message    The error message that will appear in the
+  ///                              dart Future.
+  ///
+  /// @param[in]  transient        A transient error is a failure due to
+  ///                              temporary conditions such as no network.
+  ///                              Transient errors allow the dart VM to
+  ///                              re-request the same deferred library and
+  ///                              and loading_unit_id again. Non-transient
+  ///                              errors are permanent and attempts to
+  ///                              re-request the library will instantly
+  ///                              complete with an error.
+  ///
+  virtual void LoadDartDeferredLibraryError(intptr_t loading_unit_id,
+                                            const std::string error_message,
+                                            bool transient);
+
+  //--------------------------------------------------------------------------
+  /// @brief      Replaces the asset resolver handled by the engine's
+  ///             AssetManager of the specified `type` with
+  ///             `updated_asset_resolver`. The matching AssetResolver is
+  ///             removed and replaced with `updated_asset_resolvers`.
+  ///
+  ///             AssetResolvers should be updated when the existing resolver
+  ///             becomes obsolete and a newer one becomes available that
+  ///             provides updated access to the same type of assets as the
+  ///             existing one. This update process is meant to be performed
+  ///             at runtime.
+  ///
+  ///             If a null resolver is provided, nothing will be done. If no
+  ///             matching resolver is found, the provided resolver will be
+  ///             added to the end of the AssetManager resolvers queue. The
+  ///             replacement only occurs with the first matching resolver.
+  ///             Any additional matching resolvers are untouched.
+  ///
+  /// @param[in]  updated_asset_resolver  The asset resolver to replace the
+  ///             resolver of matching type with.
+  ///
+  /// @param[in]  type  The type of AssetResolver to update. Only resolvers of
+  ///                   the specified type will be replaced by the updated
+  ///                   resolver.
+  ///
+  virtual void UpdateAssetResolverByType(
+      std::unique_ptr<AssetResolver> updated_asset_resolver,
+      AssetResolver::AssetResolverType type);
+
+  //--------------------------------------------------------------------------
+  /// @brief      Creates an object that produces surfaces suitable for raster
+  ///             snapshotting. The rasterizer will request this surface if no
+  ///             on screen surface is currently available when an application
+  ///             requests a snapshot, e.g. if `Scene.toImage` or
+  ///             `Picture.toImage` are called while the application is in the
+  ///             background.
+  ///
+  ///             Not all backends support this kind of surface usage, and the
+  ///             default implementation returns nullptr. Platforms should
+  ///             override this if they can support GPU operations in the
+  ///             background and support GPU resource context usage.
+  ///
+  virtual std::unique_ptr<SnapshotSurfaceProducer>
+  CreateSnapshotSurfaceProducer();
+
+  //--------------------------------------------------------------------------
+  /// @brief Specifies a delegate that will receive PlatformMessages from
+  /// Flutter to the host platform.
+  ///
+  /// @details If this returns `null` that means PlatformMessages should be sent
+  /// to the PlatformView.  That is to protect legacy behavior, any embedder
+  /// that wants to support executing Platform Channel handlers on background
+  /// threads should be returning a thread-safe PlatformMessageHandler instead.
+  virtual std::shared_ptr<PlatformMessageHandler> GetPlatformMessageHandler()
+      const;
+
+  //----------------------------------------------------------------------------
+  /// @brief      Get the settings for this platform view instance.
+  ///
+  /// @return     The settings.
+  ///
+  const Settings& GetSettings() const;
+
  protected:
+  // This is the only method called on the raster task runner.
+  virtual std::unique_ptr<Surface> CreateRenderingSurface();
+
   PlatformView::Delegate& delegate_;
   const TaskRunners task_runners_;
-
-  SkISize size_;
-  fml::WeakPtrFactory<PlatformView> weak_factory_;
-
-  // Unlike all other methods on the platform view, this is called on the GPU
-  // task runner.
-  virtual std::unique_ptr<Surface> CreateRenderingSurface();
+  PointerDataPacketConverter pointer_data_packet_converter_;
+  fml::WeakPtrFactory<PlatformView> weak_factory_;  // Must be the last member.
 
  private:
   FML_DISALLOW_COPY_AND_ASSIGN(PlatformView);

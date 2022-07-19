@@ -8,9 +8,8 @@ namespace flutter {
 
 std::shared_ptr<const DartVMData> DartVMData::Create(
     Settings settings,
-    fml::RefPtr<DartSnapshot> vm_snapshot,
-    fml::RefPtr<DartSnapshot> isolate_snapshot,
-    fml::RefPtr<DartSnapshot> shared_snapshot) {
+    fml::RefPtr<const DartSnapshot> vm_snapshot,
+    fml::RefPtr<const DartSnapshot> isolate_snapshot) {
   if (!vm_snapshot || !vm_snapshot->IsValid()) {
     // Caller did not provide a valid VM snapshot. Attempt to infer one
     // from the settings.
@@ -33,30 +32,25 @@ std::shared_ptr<const DartVMData> DartVMData::Create(
     }
   }
 
-  if (!shared_snapshot || !shared_snapshot->IsValid()) {
-    shared_snapshot = DartSnapshot::Empty();
-    if (!shared_snapshot) {
-      FML_LOG(ERROR) << "Shared snapshot invalid.";
-      return {};
-    }
-  }
+  fml::RefPtr<const DartSnapshot> service_isolate_snapshot =
+      DartSnapshot::VMServiceIsolateSnapshotFromSettings(settings);
 
   return std::shared_ptr<const DartVMData>(new DartVMData(
-      std::move(settings),          //
-      std::move(vm_snapshot),       //
-      std::move(isolate_snapshot),  //
-      std::move(shared_snapshot)    //
+      std::move(settings),                 //
+      std::move(vm_snapshot),              //
+      std::move(isolate_snapshot),         //
+      std::move(service_isolate_snapshot)  //
       ));
 }
 
 DartVMData::DartVMData(Settings settings,
                        fml::RefPtr<const DartSnapshot> vm_snapshot,
                        fml::RefPtr<const DartSnapshot> isolate_snapshot,
-                       fml::RefPtr<const DartSnapshot> shared_snapshot)
+                       fml::RefPtr<const DartSnapshot> service_isolate_snapshot)
     : settings_(settings),
       vm_snapshot_(vm_snapshot),
       isolate_snapshot_(isolate_snapshot),
-      shared_snapshot_(shared_snapshot) {}
+      service_isolate_snapshot_(service_isolate_snapshot) {}
 
 DartVMData::~DartVMData() = default;
 
@@ -72,8 +66,23 @@ fml::RefPtr<const DartSnapshot> DartVMData::GetIsolateSnapshot() const {
   return isolate_snapshot_;
 }
 
-fml::RefPtr<const DartSnapshot> DartVMData::GetSharedSnapshot() const {
-  return shared_snapshot_;
+fml::RefPtr<const DartSnapshot> DartVMData::GetServiceIsolateSnapshot() const {
+  // Use the specialized snapshot for the service isolate if the embedder
+  // provides one.  Otherwise, use the application snapshot.
+  return service_isolate_snapshot_ ? service_isolate_snapshot_
+                                   : isolate_snapshot_;
+}
+
+bool DartVMData::GetServiceIsolateSnapshotNullSafety() const {
+  if (service_isolate_snapshot_) {
+    // The specialized snapshot for the service isolate is always built
+    // using null safety.  However, calling Dart_DetectNullSafety on
+    // the service isolate snapshot will not work as expected - it will
+    // instead return a cached value representing the app snapshot.
+    return true;
+  } else {
+    return isolate_snapshot_->IsNullSafetyEnabled(nullptr);
+  }
 }
 
 }  // namespace flutter

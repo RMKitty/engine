@@ -7,12 +7,15 @@
 
 #include "flutter/fml/macros.h"
 #include "flutter/lib/ui/painting/codec.h"
+#include "flutter/lib/ui/painting/image_generator.h"
+
+using tonic::DartPersistentValue;
 
 namespace flutter {
 
 class MultiFrameCodec : public Codec {
  public:
-  MultiFrameCodec(std::unique_ptr<SkCodec> codec);
+  explicit MultiFrameCodec(std::shared_ptr<ImageGenerator> generator);
 
   ~MultiFrameCodec() override;
 
@@ -26,24 +29,47 @@ class MultiFrameCodec : public Codec {
   Dart_Handle getNextFrame(Dart_Handle args) override;
 
  private:
-  const std::unique_ptr<SkCodec> codec_;
-  const int frameCount_;
-  const int repetitionCount_;
-  int nextFrameIndex_;
+  // Captures the state shared between the IO and UI task runners.
+  //
+  // The state is initialized on the UI task runner when the Dart object is
+  // created. Decoding occurs on the IO task runner. Since it is possible for
+  // the UI object to be collected independently of the IO task runner work,
+  // it is not safe for this state to live directly on the MultiFrameCodec.
+  // Instead, the MultiFrameCodec creates this object when it is constructed,
+  // shares it with the IO task runner's decoding work, and sets the live_
+  // member to false when it is destructed.
+  struct State {
+    explicit State(std::shared_ptr<ImageGenerator> generator);
 
-  // The last decoded frame that's required to decode any subsequent frames.
-  std::unique_ptr<SkBitmap> lastRequiredFrame_;
-  // The index of the last decoded required frame.
-  int lastRequiredFrameIndex_ = -1;
+    const std::shared_ptr<ImageGenerator> generator_;
+    const int frameCount_;
+    const int repetitionCount_;
 
-  sk_sp<SkImage> GetNextFrameImage(fml::WeakPtr<GrContext> resourceContext);
+    // The non-const members and functions below here are only read or written
+    // to on the IO thread. They are not safe to access or write on the UI
+    // thread.
+    int nextFrameIndex_;
+    // The last decoded frame that's required to decode any subsequent frames.
+    std::unique_ptr<SkBitmap> lastRequiredFrame_;
 
-  void GetNextFrameAndInvokeCallback(
-      std::unique_ptr<DartPersistentValue> callback,
-      fml::RefPtr<fml::TaskRunner> ui_task_runner,
-      fml::WeakPtr<GrContext> resourceContext,
-      fml::RefPtr<flutter::SkiaUnrefQueue> unref_queue,
-      size_t trace_id);
+    // The index of the last decoded required frame.
+    int lastRequiredFrameIndex_ = -1;
+
+    sk_sp<SkImage> GetNextFrameImage(
+        fml::WeakPtr<GrDirectContext> resourceContext,
+        const std::shared_ptr<const fml::SyncSwitch>& gpu_disable_sync_switch);
+
+    void GetNextFrameAndInvokeCallback(
+        std::unique_ptr<DartPersistentValue> callback,
+        fml::RefPtr<fml::TaskRunner> ui_task_runner,
+        fml::WeakPtr<GrDirectContext> resourceContext,
+        fml::RefPtr<flutter::SkiaUnrefQueue> unref_queue,
+        const std::shared_ptr<const fml::SyncSwitch>& gpu_disable_sync_switch,
+        size_t trace_id);
+  };
+
+  // Shared across the UI and IO task runners.
+  std::shared_ptr<State> state_;
 
   FML_FRIEND_MAKE_REF_COUNTED(MultiFrameCodec);
   FML_FRIEND_REF_COUNTED_THREAD_SAFE(MultiFrameCodec);

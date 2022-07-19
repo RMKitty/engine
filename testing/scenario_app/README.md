@@ -1,47 +1,85 @@
 # Scenario App
 
-This folder contains a dart:ui application and scripts to compile it to AOT
-for exercising embedders.
+This folder contains e2e integration tests for the engine in conjunction with a
+fake dart:ui framework running in JIT or AOT.
 
 It intentionally has no dependencies on the Flutter framework or tooling, such
 that it should be buildable as a presubmit or postsubmit to the engine even in
 the face of changes to Dart or dart:ui that require upstream changes in the
 Flutter tooling.
 
-To add a new scenario, create a new subclass of `Scenario` and add it to the
-map in `main.dart`. For an example, see animated_color_square.dart, which draws
-a continuously animating colored square that bounces off the sides of the
-viewport.
+## Adding a New Scenario
 
-## Building for iOS
+Create a new subclass of [Scenario](https://github.com/flutter/engine/blob/5d9509ae056b04c30295df27f201f31af9777842/testing/scenario_app/lib/src/scenario.dart#L9)
+and add it to the map in [scenarios.dart](https://github.com/flutter/engine/blob/db4d423ad9c6dad373618712690acd06b0a385fd/testing/scenario_app/lib/src/scenarios.dart#L22).
+For an example, see [animated_color_square.dart](https://github.com/flutter/engine/blob/5d9509ae056b04c30295df27f201f31af9777842/testing/scenario_app/lib/src/animated_color_square.dart#L15),
+which draws a continuously animating colored square that bounces off the sides
+of the viewport.
 
-In this folder, after building the `ios_host` and `ios_profile` engine targets,
-run:
+Then set the scenario from the Android or iOS app by calling "set_scenario" on
+platform channel.
 
-```bash
-./compile_ios_aot.sh ../../../out/host_profile ../../../out/ios_profile/clang_x64/
+## Running for iOS
+
+Build the `ios_debug_sim_unopt` engine variant, and run
+
+```sh
+./run_ios_tests.sh
 ```
 
-This will create an `App.framework` copy it as well as the correct
-`Flutter.framework` to where the Xcode project expects to find them.
+in your shell.
 
-You can then use `xcodebuild` to build the `ios/Scenarios/Scenarios.xcodeproj`,
-or open that in Xcode and build it that way.
+To run or debug in Xcode, open the xcodeproj file located in
+`<engine_out_dir>/ios_debug_sim_unopt/scenario_app/Scenarios/Scenaios.xcodeproj`.
 
-Currently, only AOT modes are supported.
+### iOS Platform View Tests
 
-## Building for Android
+For PlatformView tests on iOS, you'll also have to edit the dictionaries in
+[AppDelegate.m](https://github.com/flutter/engine/blob/5d9509ae056b04c30295df27f201f31af9777842/testing/scenario_app/ios/Scenarios/Scenarios/AppDelegate.m#L29) and [GoldenTestManager.m](https://github.com/flutter/engine/blob/db4d423ad9c6dad373618712690acd06b0a385fd/testing/scenario_app/ios/Scenarios/ScenariosUITests/GoldenTestManager.m#L25) so that the correct golden image can be found.  Also, you'll have to add a [GoldenPlatformViewTests](https://github.com/flutter/engine/blob/5d9509ae056b04c30295df27f201f31af9777842/testing/scenario_app/ios/Scenarios/ScenariosUITests/GoldenPlatformViewTests.h#L18) in [PlatformViewUITests.m](https://github.com/flutter/engine/blob/af2ffc02b72af2a89242ca3c89e18269b1584ce5/testing/scenario_app/ios/Scenarios/ScenariosUITests/PlatformViewUITests.m).
 
-In this folder, after building the `host_profile` and `android_profile_arm64`
-engine targets, run:
+If `PlatformViewRotation` is failing, make sure Simulator app Device > Rotate Device Automatically
+is selected, or run:
 
 ```bash
-./compile_android_aot.sh ../../../out/host_profile ../../../out/android_profile_arm64/clang_x64/
+defaults write com.apple.iphonesimulator RotateWindowWhenSignaledByGuest -int 1
 ```
 
-This will produce a suitable `libapp.so` for building with an Android app and
-copy it (along with flutter.jar) to where Gradle will expect to find it to build
-the app in the `android/` folder. The app can be run by opening it in Android
-Studio and running it, or by running `./gradlew assemble` in the `android/`
-folder and installing the APK from the correct folder in
-`android/app/build/outputs/apk`.
+### Generating Golden Images on iOS
+
+Screenshots are saved as
+[XCTAttachment](https://developer.apple.com/documentation/xctest/activities_and_attachments/adding_attachments_to_tests_and_activities?language=objc)'s.
+If you look at the output from running the tests you'll find a path in the form:
+`/Users/$USER/Library/Developer/Xcode/DerivedData/Scenarios-$HASH`.
+Inside that directory you'll find
+`./Build/Products/Debug-iphonesimulator/ScenariosUITests-Runner.app/PlugIns/ScenariosUITests.xctest/` which is where all the images that were
+compared against golden reside.
+
+## Running for Android
+
+### Integration tests
+
+For emulators running on a x64 host, build `android_debug_unopt_x64` using
+`./tools/gn --android --unoptimized --goma --android-cpu=x64`.
+
+Then, launch the emulator, and run `./testing/scenario_app/run_android_tests.sh android_debug_unopt_x64`.
+
+If you wish to build a different engine variant, make sure to pass that variant to the script `run_android_tests.sh`.
+
+If you make a change to the source code, you would need to rebuild the same engine variant.
+
+### Smoke test on FTL
+
+To run the smoke test on Firebase TestLab test, build `android_profile_arm64`, and run
+`./flutter/ci/firebase_testlab.py`. If you wish to test a different variant, e.g.
+debug arm64, pass `--variant android_debug_arm64`.
+
+### Updating Gradle dependencies
+
+If a Gradle dependency is updated, lockfiles must be regenerated.
+
+To generate new lockfiles, run:
+
+```bash
+cd android
+../../../../third_party/gradle/bin/gradle generateLockfiles
+```

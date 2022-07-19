@@ -14,19 +14,23 @@
 
 namespace flutter {
 
-// DEPRECATED
-// The frame per second FPS could be different than 60 (e.g., 120).
-static const double kOneFrameMS = 1e3 / 60.0;
-
 class Stopwatch {
  public:
-  Stopwatch();
+  /// The refresh rate interface for `Stopwatch`.
+  class RefreshRateUpdater {
+   public:
+    /// Time limit for a smooth frame.
+    /// See: `DisplayManager::GetMainDisplayRefreshRate`.
+    virtual fml::Milliseconds GetFrameBudget() const = 0;
+  };
+
+  /// The constructor with a updater parameter, it will update frame_budget
+  /// everytime when `GetFrameBudget()` is called.
+  explicit Stopwatch(const RefreshRateUpdater& updater);
 
   ~Stopwatch();
 
   const fml::TimeDelta& LastLap() const;
-
-  fml::TimeDelta CurrentLap() const { return fml::TimePoint::Now() - start_; }
 
   fml::TimeDelta MaxDelta() const;
 
@@ -34,7 +38,7 @@ class Stopwatch {
 
   void InitVisualizeSurface(const SkRect& rect) const;
 
-  void Visualize(SkCanvas& canvas, const SkRect& rect) const;
+  void Visualize(SkCanvas* canvas, const SkRect& rect) const;
 
   void Start();
 
@@ -42,10 +46,18 @@ class Stopwatch {
 
   void SetLapTime(const fml::TimeDelta& delta);
 
+  /// All places which want to get frame_budget should call this function.
+  fml::Milliseconds GetFrameBudget() const;
+
  private:
+  inline double UnitFrameInterval(double time_ms) const;
+  inline double UnitHeight(double time_ms, double max_height) const;
+
+  const RefreshRateUpdater& refresh_rate_updater_;
   fml::TimePoint start_;
   std::vector<fml::TimeDelta> laps_;
   size_t current_sample_;
+
   // Mutable data cache for performance optimization of the graphs. Prevents
   // expensive redrawing of old data.
   mutable bool cache_dirty_;
@@ -55,43 +67,26 @@ class Stopwatch {
   FML_DISALLOW_COPY_AND_ASSIGN(Stopwatch);
 };
 
-class Counter {
+/// Used for fixed refresh rate query cases.
+class FixedRefreshRateUpdater : public Stopwatch::RefreshRateUpdater {
+  fml::Milliseconds GetFrameBudget() const override;
+
  public:
-  Counter() : count_(0) {}
-
-  size_t count() const { return count_; }
-
-  void Reset(size_t count = 0) { count_ = count; }
-
-  void Increment(size_t count = 1) { count_ += count; }
+  explicit FixedRefreshRateUpdater(
+      fml::Milliseconds fixed_frame_budget = fml::kDefaultFrameBudget);
 
  private:
-  size_t count_;
-
-  FML_DISALLOW_COPY_AND_ASSIGN(Counter);
+  fml::Milliseconds fixed_frame_budget_;
 };
 
-class CounterValues {
+/// Used for fixed refresh rate cases.
+class FixedRefreshRateStopwatch : public Stopwatch {
  public:
-  CounterValues();
-
-  ~CounterValues();
-
-  void Add(int64_t value);
-
-  void Visualize(SkCanvas& canvas, const SkRect& rect) const;
-
-  int64_t GetCurrentValue() const;
-
-  int64_t GetMaxValue() const;
-
-  int64_t GetMinValue() const;
+  explicit FixedRefreshRateStopwatch(
+      fml::Milliseconds fixed_frame_budget = fml::kDefaultFrameBudget);
 
  private:
-  std::vector<int64_t> values_;
-  size_t current_sample_;
-
-  FML_DISALLOW_COPY_AND_ASSIGN(CounterValues);
+  FixedRefreshRateUpdater fixed_delegate_;
 };
 
 }  // namespace flutter

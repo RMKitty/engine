@@ -16,7 +16,7 @@ namespace testing {
 // the headers in platform/windows/public/.
 
 // Linking this class into a test binary will provide dummy forwarding
-// implementantions of that C API, so that the wrapper can be tested separately
+// implementations of that C API, so that the wrapper can be tested separately
 // from the actual library.
 class StubFlutterWindowsApi {
  public:
@@ -24,54 +24,59 @@ class StubFlutterWindowsApi {
   // will be forwarded.
   static void SetTestStub(StubFlutterWindowsApi* stub);
 
-  // Returns the current stub, as last set by SetTestFluttterStub.
+  // Returns the current stub, as last set by SetTestFlutterStub.
   static StubFlutterWindowsApi* GetTestStub();
 
   virtual ~StubFlutterWindowsApi() {}
 
-  // Called for FlutterDesktopInit.
-  virtual bool Init() { return true; }
-
-  // Called for FlutterDesktopTerminate.
-  virtual void Terminate() {}
-
-  // Called for FlutterDesktopCreateWindow.
-  virtual FlutterDesktopWindowControllerRef CreateWindow(
-      int initial_width,
-      int initial_height,
-      const char* title,
-      const char* assets_path,
-      const char* icu_data_path,
-      const char** arguments,
-      size_t argument_count) {
+  // Called for FlutterDesktopViewControllerCreate.
+  virtual FlutterDesktopViewControllerRef
+  ViewControllerCreate(int width, int height, FlutterDesktopEngineRef engine) {
     return nullptr;
   }
 
-  // Called for FlutterDesktopDestroyWindow.
-  virtual void DestroyWindow() {}
+  // Called for FlutterDesktopViewControllerDestroy.
+  virtual void ViewControllerDestroy() {}
 
-  // Called for FlutterDesktopSetHoverEnabled.
-  virtual void SetHoverEnabled(bool enabled) {}
+  // Called for FlutterDesktopViewControllerHandleTopLevelWindowProc.
+  virtual bool ViewControllerHandleTopLevelWindowProc(HWND hwnd,
+                                                      UINT message,
+                                                      WPARAM wparam,
+                                                      LPARAM lparam,
+                                                      LRESULT* result) {
+    return false;
+  }
 
-  // Called for FlutterDesktopSetWindowTitle.
-  virtual void SetWindowTitle(const char* title) {}
-
-  //  Called for FlutterDesktopSetWindowIcon.
-  virtual void SetWindowIcon(uint8_t* pixel_data, int width, int height) {}
-
-  // Called for FlutterDesktopRunWindowLoop.
-  virtual void RunWindowLoop() {}
-
-  // Called for FlutterDesktopRunEngine.
-  virtual FlutterDesktopEngineRef RunEngine(const char* assets_path,
-                                            const char* icu_data_path,
-                                            const char** arguments,
-                                            size_t argument_count) {
+  // Called for FlutterDesktopEngineCreate.
+  virtual FlutterDesktopEngineRef EngineCreate(
+      const FlutterDesktopEngineProperties& engine_properties) {
     return nullptr;
   }
 
-  // Called for FlutterDesktopShutDownEngine.
-  virtual bool ShutDownEngine() { return true; }
+  // Called for FlutterDesktopEngineDestroy.
+  virtual bool EngineDestroy() { return true; }
+
+  // Called for FlutterDesktopEngineRun.
+  virtual bool EngineRun(const char* entry_point) { return true; }
+
+  // Called for FlutterDesktopEngineProcessMessages.
+  virtual uint64_t EngineProcessMessages() { return 0; }
+
+  // Called for FlutterDesktopEngineReloadSystemFonts.
+  virtual void EngineReloadSystemFonts() {}
+
+  // Called for FlutterDesktopViewGetHWND.
+  virtual HWND ViewGetHWND() { return reinterpret_cast<HWND>(1); }
+
+  // Called for FlutterDesktopPluginRegistrarRegisterTopLevelWindowProcDelegate.
+  virtual void PluginRegistrarRegisterTopLevelWindowProcDelegate(
+      FlutterDesktopWindowProcCallback delegate,
+      void* user_data) {}
+
+  // Called for
+  // FlutterDesktopPluginRegistrarUnregisterTopLevelWindowProcDelegate.
+  virtual void PluginRegistrarUnregisterTopLevelWindowProcDelegate(
+      FlutterDesktopWindowProcCallback delegate) {}
 };
 
 // A test helper that owns a stub implementation, making it the test stub for

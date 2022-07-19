@@ -5,27 +5,27 @@
 #ifndef FLUTTER_FLOW_LAYERS_CLIP_PATH_LAYER_H_
 #define FLUTTER_FLOW_LAYERS_CLIP_PATH_LAYER_H_
 
-#include "flutter/flow/layers/container_layer.h"
+#include "flutter/flow/layers/clip_shape_layer.h"
 
 namespace flutter {
 
-class ClipPathLayer : public ContainerLayer {
+class ClipPathLayer : public ClipShapeLayer<SkPath> {
  public:
-  ClipPathLayer(const SkPath& clip_path, Clip clip_behavior = Clip::antiAlias);
-  ~ClipPathLayer() override;
+  explicit ClipPathLayer(const SkPath& clip_path,
+                         Clip clip_behavior = Clip::antiAlias);
 
   void Preroll(PrerollContext* context, const SkMatrix& matrix) override;
 
   void Paint(PaintContext& context) const override;
 
-#if defined(OS_FUCHSIA)
-  void UpdateScene(SceneUpdateContext& context) override;
-#endif  // defined(OS_FUCHSIA)
+ protected:
+  const SkRect& clip_shape_bounds() const override;
+
+  void OnMutatorsStackPushClipShape(MutatorsStack& mutators_stack) override;
+
+  void OnCanvasClipShape(SkCanvas* canvas) const override;
 
  private:
-  SkPath clip_path_;
-  Clip clip_behavior_;
-
   FML_DISALLOW_COPY_AND_ASSIGN(ClipPathLayer);
 };
 

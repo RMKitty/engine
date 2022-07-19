@@ -11,28 +11,31 @@
 
 #include "flutter/fml/build_config.h"
 #include "flutter/fml/logging.h"
-#include "flutter/fml/trace_event.h"
 
-#if OS_MACOSX
+#if FML_OS_MACOSX
 #include "flutter/fml/platform/darwin/message_loop_darwin.h"
-#elif OS_ANDROID
+#elif FML_OS_ANDROID
 #include "flutter/fml/platform/android/message_loop_android.h"
-#elif OS_LINUX
+#elif OS_FUCHSIA
+#include "flutter/fml/platform/fuchsia/message_loop_fuchsia.h"
+#elif FML_OS_LINUX
 #include "flutter/fml/platform/linux/message_loop_linux.h"
-#elif OS_WIN
+#elif FML_OS_WIN
 #include "flutter/fml/platform/win/message_loop_win.h"
 #endif
 
 namespace fml {
 
 fml::RefPtr<MessageLoopImpl> MessageLoopImpl::Create() {
-#if OS_MACOSX
+#if FML_OS_MACOSX
   return fml::MakeRefCounted<MessageLoopDarwin>();
-#elif OS_ANDROID
+#elif FML_OS_ANDROID
   return fml::MakeRefCounted<MessageLoopAndroid>();
-#elif OS_LINUX
+#elif OS_FUCHSIA
+  return fml::MakeRefCounted<MessageLoopFuchsia>();
+#elif FML_OS_LINUX
   return fml::MakeRefCounted<MessageLoopLinux>();
-#elif OS_WIN
+#elif FML_OS_WIN
   return fml::MakeRefCounted<MessageLoopWin>();
 #else
   return nullptr;
@@ -46,10 +49,12 @@ MessageLoopImpl::MessageLoopImpl()
   task_queue_->SetWakeable(queue_id_, this);
 }
 
-MessageLoopImpl::~MessageLoopImpl() = default;
+MessageLoopImpl::~MessageLoopImpl() {
+  task_queue_->Dispose(queue_id_);
+}
 
-void MessageLoopImpl::PostTask(fml::closure task, fml::TimePoint target_time) {
-  FML_DCHECK(task != nullptr);
+void MessageLoopImpl::PostTask(const fml::closure& task,
+                               fml::TimePoint target_time) {
   FML_DCHECK(task != nullptr);
   if (terminated_) {
     // If the message loop has already been terminated, PostTask should destruct
@@ -59,12 +64,17 @@ void MessageLoopImpl::PostTask(fml::closure task, fml::TimePoint target_time) {
   task_queue_->RegisterTask(queue_id_, task, target_time);
 }
 
-void MessageLoopImpl::AddTaskObserver(intptr_t key, fml::closure callback) {
+void MessageLoopImpl::AddTaskObserver(intptr_t key,
+                                      const fml::closure& callback) {
   FML_DCHECK(callback != nullptr);
   FML_DCHECK(MessageLoop::GetCurrent().GetLoopImpl().get() == this)
       << "Message loop task observer must be added on the same thread as the "
          "loop.";
-  task_queue_->AddTaskObserver(queue_id_, key, callback);
+  if (callback != nullptr) {
+    task_queue_->AddTaskObserver(queue_id_, key, callback);
+  } else {
+    FML_LOG(ERROR) << "Tried to add a null TaskObserver.";
+  }
 }
 
 void MessageLoopImpl::RemoveTaskObserver(intptr_t key) {
@@ -97,7 +107,7 @@ void MessageLoopImpl::DoRun() {
   // should be destructed on the message loop's thread. We have just returned
   // from the implementations |Run| method which we know is on the correct
   // thread. Drop all pending tasks on the floor.
-  task_queue_->Dispose(queue_id_);
+  task_queue_->DisposeTasks(queue_id_);
 }
 
 void MessageLoopImpl::DoTerminate() {
@@ -105,39 +115,24 @@ void MessageLoopImpl::DoTerminate() {
   Terminate();
 }
 
-// Thread safety analysis disabled as it does not account for defered locks.
-void MessageLoopImpl::SwapTaskQueues(const fml::RefPtr<MessageLoopImpl>& other)
-    FML_NO_THREAD_SAFETY_ANALYSIS {
-  if (terminated_ || other->terminated_) {
-    return;
-  }
-
-  // task_flushing locks
-  std::unique_lock<std::mutex> t1(tasks_flushing_mutex_, std::defer_lock);
-  std::unique_lock<std::mutex> t2(other->tasks_flushing_mutex_,
-                                  std::defer_lock);
-
-  std::lock(t1, t2);
-  task_queue_->Swap(queue_id_, other->queue_id_);
-}
-
 void MessageLoopImpl::FlushTasks(FlushType type) {
-  TRACE_EVENT0("fml", "MessageLoop::FlushTasks");
-  std::vector<fml::closure> invocations;
-
-  // We are grabbing this lock here as a proxy to indicate
-  // that we are running tasks and will invoke the
-  // "right" observers, we are trying to avoid the scenario
-  // where:
-  // gather invocations -> Swap -> execute invocations
-  // will lead us to run invocations on the wrong thread.
-  std::scoped_lock task_flush_lock(tasks_flushing_mutex_);
-  task_queue_->GetTasksToRunNow(queue_id_, type, invocations);
-
-  for (const auto& invocation : invocations) {
+  const auto now = fml::TimePoint::Now();
+  fml::closure invocation;
+  do {
+    invocation = task_queue_->GetNextTaskToRun(queue_id_, now);
+    if (!invocation) {
+      break;
+    }
     invocation();
-    task_queue_->NotifyObservers(queue_id_);
-  }
+    std::vector<fml::closure> observers =
+        task_queue_->GetObserversToNotify(queue_id_);
+    for (const auto& observer : observers) {
+      observer();
+    }
+    if (type == FlushType::kSingle) {
+      break;
+    }
+  } while (invocation);
 }
 
 void MessageLoopImpl::RunExpiredTasksNow() {

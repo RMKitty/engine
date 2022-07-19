@@ -110,7 +110,8 @@ class HyphenEdit {
   static uint32_t editForNextLine(HyphenationType type);
 
   HyphenEdit() : hyphen(NO_EDIT) {}
-  HyphenEdit(uint32_t hyphenInt) : hyphen(hyphenInt) {}  // NOLINT(implicit)
+  HyphenEdit(uint32_t hyphenInt)  // NOLINT(google-explicit-constructor)
+      : hyphen(hyphenInt) {}
   uint32_t getHyphen() const { return hyphen; }
   bool operator==(const HyphenEdit& other) const {
     return hyphen == other.hyphen;
@@ -167,7 +168,7 @@ class Hyphenator {
   // Try looking up word in alphabet table, return DONT_BREAK if any code units
   // fail to map. Otherwise, returns BREAK_AND_INSERT_HYPHEN,
   // BREAK_AND_INSERT_ARMENIAN_HYPHEN, or BREAK_AND_DONT_INSERT_HYPHEN based on
-  // the the script of the characters seen. Note that this method writes len+2
+  // the script of the characters seen. Note that this method writes len+2
   // entries into alpha_codes (including start and stop)
   HyphenationType alphabetLookup(uint16_t* alpha_codes,
                                  const uint16_t* word,

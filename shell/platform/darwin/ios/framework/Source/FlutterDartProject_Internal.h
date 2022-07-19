@@ -6,20 +6,38 @@
 #define SHELL_PLATFORM_IOS_FRAMEWORK_SOURCE_FLUTTERDARTPROJECT_INTERNAL_H_
 
 #include "flutter/common/settings.h"
+#include "flutter/runtime/platform_data.h"
 #include "flutter/shell/common/engine.h"
-#include "flutter/shell/platform/darwin/ios/framework/Headers/FlutterDartProject.h"
+#import "flutter/shell/platform/darwin/ios/framework/Headers/FlutterDartProject.h"
+
+NS_ASSUME_NONNULL_BEGIN
+
+flutter::Settings FLTDefaultSettingsForBundle(NSBundle* bundle = nil);
 
 @interface FlutterDartProject ()
 
+/**
+ * This is currently used for *only for tests* to override settings.
+ */
+- (instancetype)initWithSettings:(const flutter::Settings&)settings;
 - (const flutter::Settings&)settings;
+- (const flutter::PlatformData)defaultPlatformData;
 
 - (flutter::RunConfiguration)runConfiguration;
-- (flutter::RunConfiguration)runConfigurationForEntrypoint:(NSString*)entrypointOrNil;
-- (flutter::RunConfiguration)runConfigurationForEntrypoint:(NSString*)entrypointOrNil
-                                              libraryOrNil:(NSString*)dartLibraryOrNil;
+- (flutter::RunConfiguration)runConfigurationForEntrypoint:(nullable NSString*)entrypointOrNil;
+- (flutter::RunConfiguration)runConfigurationForEntrypoint:(nullable NSString*)entrypointOrNil
+                                              libraryOrNil:(nullable NSString*)dartLibraryOrNil;
+- (flutter::RunConfiguration)runConfigurationForEntrypoint:(nullable NSString*)entrypointOrNil
+                                              libraryOrNil:(nullable NSString*)dartLibraryOrNil
+                                            entrypointArgs:
+                                                (nullable NSArray<NSString*>*)entrypointArgs;
 
 + (NSString*)flutterAssetsName:(NSBundle*)bundle;
++ (NSString*)domainNetworkPolicy:(NSDictionary*)appTransportSecurity;
++ (bool)allowsArbitraryLoads:(NSDictionary*)appTransportSecurity;
 
 @end
+
+NS_ASSUME_NONNULL_END
 
 #endif  // SHELL_PLATFORM_IOS_FRAMEWORK_SOURCE_FLUTTERDARTPROJECT_INTERNAL_H_

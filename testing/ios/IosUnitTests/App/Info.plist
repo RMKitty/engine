@@ -24,6 +24,34 @@
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
 	<string>Main</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+                <key>NSExceptionDomains</key>
+		<dict>
+			<key>invalid-site.com</key>
+			<dict>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+				<key>NSThirdPartyExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+			<key>sub.invalid-site.com</key>
+                        <dict>
+                                <key>NSThirdPartyExceptionAllowsInsecureHTTPLoads</key>
+                                <false/>
+                        </dict>
+		</dict>
+	</dict>
+	<key>FLTLeakDartVM</key>
+	<false/>
+	<key>FLTEnableImpeller</key>
+	<false/>
+	<key>FLTTraceSystrace</key>
+	<false/>
+	<key>FLTEnableDartProfiling</key>
+	<false/>
 	<key>UIRequiredDeviceCapabilities</key>
 	<array>
 		<string>armv7</string>

@@ -11,6 +11,7 @@
 #include "flutter/lib/ui/isolate_name_server/isolate_name_server.h"
 #include "flutter/runtime/dart_vm.h"
 #include "flutter/runtime/service_protocol.h"
+#include "third_party/dart/runtime/include/dart_tools_api.h"
 
 namespace flutter {
 
@@ -26,11 +27,12 @@ namespace flutter {
 // DartVMRef instances may be created on any thread.
 class DartVMRef {
  public:
-  FML_WARN_UNUSED_RESULT
-  static DartVMRef Create(Settings settings,
-                          fml::RefPtr<DartSnapshot> vm_snapshot = nullptr,
-                          fml::RefPtr<DartSnapshot> isolate_snapshot = nullptr,
-                          fml::RefPtr<DartSnapshot> shared_snapshot = nullptr);
+  [[nodiscard]] static DartVMRef Create(
+      Settings settings,
+      fml::RefPtr<const DartSnapshot> vm_snapshot = nullptr,
+      fml::RefPtr<const DartSnapshot> isolate_snapshot = nullptr);
+
+  DartVMRef(const DartVMRef&) = default;
 
   DartVMRef(DartVMRef&&);
 
@@ -47,14 +49,24 @@ class DartVMRef {
 
   static std::shared_ptr<IsolateNameServer> GetIsolateNameServer();
 
-  operator bool() const { return static_cast<bool>(vm_); }
+  explicit operator bool() const { return static_cast<bool>(vm_); }
 
   DartVM* get() {
     FML_DCHECK(vm_);
     return vm_.get();
   }
 
+  const DartVM* get() const {
+    FML_DCHECK(vm_);
+    return vm_.get();
+  }
+
   DartVM* operator->() {
+    FML_DCHECK(vm_);
+    return vm_.get();
+  }
+
+  const DartVM* operator->() const {
     FML_DCHECK(vm_);
     return vm_.get();
   }
@@ -69,12 +81,10 @@ class DartVMRef {
 
   std::shared_ptr<DartVM> vm_;
 
-  DartVMRef(std::shared_ptr<DartVM> vm);
+  explicit DartVMRef(std::shared_ptr<DartVM> vm);
 
   // Only used by Dart Isolate to register itself with the VM.
   static DartVM* GetRunningVM();
-
-  FML_DISALLOW_COPY_AND_ASSIGN(DartVMRef);
 };
 
 }  // namespace flutter

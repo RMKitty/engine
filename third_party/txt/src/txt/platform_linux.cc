@@ -12,11 +12,11 @@
 
 namespace txt {
 
-std::string GetDefaultFontFamily() {
-  return "Arial";
+std::vector<std::string> GetDefaultFontFamilies() {
+  return {"Ubuntu", "Cantarell", "DejaVu Sans", "Liberation Sans", "Arial"};
 }
 
-sk_sp<SkFontMgr> GetDefaultFontManager() {
+sk_sp<SkFontMgr> GetDefaultFontManager(uint32_t font_initialization_data) {
 #ifdef FLUTTER_USE_FONTCONFIG
   return SkFontMgr_New_FontConfig(nullptr);
 #else

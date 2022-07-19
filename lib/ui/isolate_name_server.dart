@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
+// @dart = 2.14
 part of dart.ui;
 
 /// Static methods to allow for simple sharing of [SendPort]s across [Isolate]s.
@@ -22,7 +24,7 @@ part of dart.ui;
 class IsolateNameServer {
   // This class is only a namespace, and should not be instantiated or
   // extended directly.
-  factory IsolateNameServer._() => null;
+  factory IsolateNameServer._() => throw UnsupportedError('Namespace');
 
   /// Looks up the [SendPort] associated with a given name.
   ///
@@ -30,7 +32,7 @@ class IsolateNameServer {
   /// place, consider [registerPortWithName].
   ///
   /// The `name` argument must not be null.
-  static SendPort lookupPortByName(String name) {
+  static SendPort? lookupPortByName(String name) {
     assert(name != null, "'name' cannot be null.");
     return _lookupPortByName(name);
   }
@@ -70,10 +72,12 @@ class IsolateNameServer {
     return _removePortNameMapping(name);
   }
 
-  static SendPort _lookupPortByName(String name)
-      native 'IsolateNameServerNatives_LookupPortByName';
-  static bool _registerPortWithName(SendPort port, String name)
-      native 'IsolateNameServerNatives_RegisterPortWithName';
-  static bool _removePortNameMapping(String name)
-      native 'IsolateNameServerNatives_RemovePortNameMapping';
+  @FfiNative<Handle Function(Handle)>('IsolateNameServerNatives::LookupPortByName')
+  external static SendPort? _lookupPortByName(String name);
+
+  @FfiNative<Bool Function(Handle, Handle)>('IsolateNameServerNatives::RegisterPortWithName')
+  external static bool _registerPortWithName(SendPort port, String name);
+
+  @FfiNative<Bool Function(Handle)>('IsolateNameServerNatives::RemovePortNameMapping')
+  external static bool _removePortNameMapping(String name);
 }

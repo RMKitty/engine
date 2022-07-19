@@ -4,6 +4,7 @@
 
 #include "flutter/lib/ui/semantics/semantics_update_builder.h"
 
+#include "flutter/lib/ui/ui_dart_state.h"
 #include "third_party/skia/include/core/SkScalar.h"
 #include "third_party/tonic/converter/dart_converter.h"
 #include "third_party/tonic/dart_args.h"
@@ -12,25 +13,15 @@
 
 namespace flutter {
 
-static void SemanticsUpdateBuilder_constructor(Dart_NativeArguments args) {
-  DartCallConstructor(&SemanticsUpdateBuilder::create, args);
+void pushStringAttributes(
+    StringAttributes& destination,
+    const std::vector<NativeStringAttribute*>& native_attributes) {
+  for (const auto& native_attribute : native_attributes) {
+    destination.push_back(native_attribute->GetAttribute());
+  }
 }
 
 IMPLEMENT_WRAPPERTYPEINFO(ui, SemanticsUpdateBuilder);
-
-#define FOR_EACH_BINDING(V)                     \
-  V(SemanticsUpdateBuilder, updateNode)         \
-  V(SemanticsUpdateBuilder, updateCustomAction) \
-  V(SemanticsUpdateBuilder, build)
-
-FOR_EACH_BINDING(DART_NATIVE_CALLBACK)
-
-void SemanticsUpdateBuilder::RegisterNatives(
-    tonic::DartLibraryNatives* natives) {
-  natives->Register({{"SemanticsUpdateBuilder_constructor",
-                      SemanticsUpdateBuilder_constructor, 1, true},
-                     FOR_EACH_BINDING(DART_REGISTER_NATIVE)});
-}
 
 SemanticsUpdateBuilder::SemanticsUpdateBuilder() = default;
 
@@ -40,6 +31,8 @@ void SemanticsUpdateBuilder::updateNode(
     int id,
     int flags,
     int actions,
+    int maxValueLength,
+    int currentValueLength,
     int textSelectionBase,
     int textSelectionExtent,
     int platformViewId,
@@ -55,10 +48,16 @@ void SemanticsUpdateBuilder::updateNode(
     double elevation,
     double thickness,
     std::string label,
-    std::string hint,
+    std::vector<NativeStringAttribute*> labelAttributes,
     std::string value,
+    std::vector<NativeStringAttribute*> valueAttributes,
     std::string increasedValue,
+    std::vector<NativeStringAttribute*> increasedValueAttributes,
     std::string decreasedValue,
+    std::vector<NativeStringAttribute*> decreasedValueAttributes,
+    std::string hint,
+    std::vector<NativeStringAttribute*> hintAttributes,
+    std::string tooltip,
     int textDirection,
     const tonic::Float64List& transform,
     const tonic::Int32List& childrenInTraversalOrder,
@@ -74,6 +73,8 @@ void SemanticsUpdateBuilder::updateNode(
   node.id = id;
   node.flags = flags;
   node.actions = actions;
+  node.maxValueLength = maxValueLength;
+  node.currentValueLength = currentValueLength;
   node.textSelectionBase = textSelectionBase;
   node.textSelectionExtent = textSelectionExtent;
   node.platformViewId = platformViewId;
@@ -86,12 +87,22 @@ void SemanticsUpdateBuilder::updateNode(
   node.elevation = elevation;
   node.thickness = thickness;
   node.label = label;
-  node.hint = hint;
+  pushStringAttributes(node.labelAttributes, labelAttributes);
   node.value = value;
+  pushStringAttributes(node.valueAttributes, valueAttributes);
   node.increasedValue = increasedValue;
+  pushStringAttributes(node.increasedValueAttributes, increasedValueAttributes);
   node.decreasedValue = decreasedValue;
+  pushStringAttributes(node.decreasedValueAttributes, decreasedValueAttributes);
+  node.hint = hint;
+  pushStringAttributes(node.hintAttributes, hintAttributes);
+  node.tooltip = tooltip;
   node.textDirection = textDirection;
-  node.transform.setColMajord(transform.data());
+  SkScalar scalarTransform[16];
+  for (int i = 0; i < 16; ++i) {
+    scalarTransform[i] = transform.data()[i];
+  }
+  node.transform = SkM44::ColMajor(scalarTransform);
   node.childrenInTraversalOrder =
       std::vector<int32_t>(childrenInTraversalOrder.data(),
                            childrenInTraversalOrder.data() +
@@ -117,8 +128,9 @@ void SemanticsUpdateBuilder::updateCustomAction(int id,
   actions_[id] = action;
 }
 
-fml::RefPtr<SemanticsUpdate> SemanticsUpdateBuilder::build() {
-  return SemanticsUpdate::create(std::move(nodes_), std::move(actions_));
+void SemanticsUpdateBuilder::build(Dart_Handle semantics_update_handle) {
+  SemanticsUpdate::create(semantics_update_handle, std::move(nodes_),
+                          std::move(actions_));
 }
 
 }  // namespace flutter

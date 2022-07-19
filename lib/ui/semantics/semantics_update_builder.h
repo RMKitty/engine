@@ -5,8 +5,12 @@
 #ifndef FLUTTER_LIB_UI_SEMANTICS_SEMANTICS_UPDATE_BUILDER_H_
 #define FLUTTER_LIB_UI_SEMANTICS_SEMANTICS_UPDATE_BUILDER_H_
 
+#include <any>
+#include <list>
+
 #include "flutter/lib/ui/dart_wrapper.h"
 #include "flutter/lib/ui/semantics/semantics_update.h"
+#include "flutter/lib/ui/ui_dart_state.h"
 #include "third_party/tonic/typed_data/typed_list.h"
 
 namespace flutter {
@@ -17,8 +21,10 @@ class SemanticsUpdateBuilder
   FML_FRIEND_MAKE_REF_COUNTED(SemanticsUpdateBuilder);
 
  public:
-  static fml::RefPtr<SemanticsUpdateBuilder> create() {
-    return fml::MakeRefCounted<SemanticsUpdateBuilder>();
+  static void Create(Dart_Handle wrapper) {
+    UIDartState::ThrowIfUIOperationsProhibited();
+    auto res = fml::MakeRefCounted<SemanticsUpdateBuilder>();
+    res->AssociateWithDartWrapper(wrapper);
   }
 
   ~SemanticsUpdateBuilder() override;
@@ -26,6 +32,8 @@ class SemanticsUpdateBuilder
   void updateNode(int id,
                   int flags,
                   int actions,
+                  int maxValueLength,
+                  int currentValueLength,
                   int textSelectionBase,
                   int textSelectionExtent,
                   int platformViewId,
@@ -41,10 +49,16 @@ class SemanticsUpdateBuilder
                   double elevation,
                   double thickness,
                   std::string label,
-                  std::string hint,
+                  std::vector<NativeStringAttribute*> labelAttributes,
                   std::string value,
+                  std::vector<NativeStringAttribute*> valueAttributes,
                   std::string increasedValue,
+                  std::vector<NativeStringAttribute*> increasedValueAttributes,
                   std::string decreasedValue,
+                  std::vector<NativeStringAttribute*> decreasedValueAttributes,
+                  std::string hint,
+                  std::vector<NativeStringAttribute*> hintAttributes,
+                  std::string tooltip,
                   int textDirection,
                   const tonic::Float64List& transform,
                   const tonic::Int32List& childrenInTraversalOrder,
@@ -56,13 +70,10 @@ class SemanticsUpdateBuilder
                           std::string hint,
                           int overrideId);
 
-  fml::RefPtr<SemanticsUpdate> build();
-
-  static void RegisterNatives(tonic::DartLibraryNatives* natives);
+  void build(Dart_Handle semantics_update_handle);
 
  private:
   explicit SemanticsUpdateBuilder();
-
   SemanticsNodeUpdates nodes_;
   CustomAccessibilityActionUpdates actions_;
 };

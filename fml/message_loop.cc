@@ -61,7 +61,7 @@ fml::RefPtr<MessageLoopImpl> MessageLoop::GetLoopImpl() const {
   return loop_;
 }
 
-void MessageLoop::AddTaskObserver(intptr_t key, fml::closure callback) {
+void MessageLoop::AddTaskObserver(intptr_t key, const fml::closure& callback) {
   loop_->AddTaskObserver(key, callback);
 }
 
@@ -71,12 +71,6 @@ void MessageLoop::RemoveTaskObserver(intptr_t key) {
 
 void MessageLoop::RunExpiredTasksNow() {
   loop_->RunExpiredTasksNow();
-}
-
-void MessageLoop::SwapTaskQueues(MessageLoop* other) {
-  FML_CHECK(loop_);
-  FML_CHECK(other->loop_);
-  loop_->SwapTaskQueues(other->loop_);
 }
 
 TaskQueueId MessageLoop::GetCurrentTaskQueueId() {

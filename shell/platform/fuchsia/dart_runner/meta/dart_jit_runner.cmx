@@ -4,18 +4,19 @@
     },
     "sandbox": {
         "features": [
-            "root-ssl-certificates",
-            "deprecated-ambient-replace-as-executable"
+            "config-data",
+            "deprecated-ambient-replace-as-executable",
+            "root-ssl-certificates"
         ],
         "services": [
-            "fuchsia.crash.Analyzer",
+            "fuchsia.device.NameProvider",
+            "fuchsia.feedback.CrashReporter",
+            "fuchsia.intl.PropertyProvider",
             "fuchsia.logger.LogSink",
+            "fuchsia.net.name.Lookup",
             "fuchsia.posix.socket.Provider",
-            "fuchsia.net.NameLookup",
-            "fuchsia.net.SocketProvider",
             "fuchsia.process.Launcher",
             "fuchsia.process.Resolver",
-            "fuchsia.timezone.Timezone",
             "fuchsia.tracing.provider.Registry"
         ]
     }

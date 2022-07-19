@@ -7,10 +7,11 @@
 
 #import <Foundation/Foundation.h>
 
-#include "FlutterBinaryMessenger.h"
-#include "FlutterDartProject.h"
-#include "FlutterMacros.h"
-#include "FlutterPluginRegistrarMacOS.h"
+#import "FlutterBinaryMessenger.h"
+#import "FlutterDartProject.h"
+#import "FlutterMacros.h"
+#import "FlutterPluginRegistrarMacOS.h"
+#import "FlutterTexture.h"
 
 // TODO: Merge this file with the iOS FlutterEngine.h.
 
@@ -19,11 +20,11 @@
 /**
  * Coordinates a single instance of execution of a Flutter engine.
  */
-FLUTTER_EXPORT
-@interface FlutterEngine : NSObject <FlutterPluginRegistry>
+FLUTTER_DARWIN_EXPORT
+@interface FlutterEngine : NSObject <FlutterTextureRegistry, FlutterPluginRegistry>
 
 /**
- * Initializes an engine with the given viewController.
+ * Initializes an engine with the given project.
  *
  * @param labelPrefix Currently unused; in the future, may be used for labelling threads
  *                    as with the iOS FlutterEngine.
@@ -33,7 +34,7 @@ FLUTTER_EXPORT
                              project:(nullable FlutterDartProject*)project;
 
 /**
- * Initializes an engine with the given viewController.
+ * Initializes an engine that can run headlessly with the given project.
  *
  * @param labelPrefix Currently unused; in the future, may be used for labelling threads
  *                    as with the iOS FlutterEngine.
@@ -70,6 +71,13 @@ FLUTTER_EXPORT
  * The `FlutterBinaryMessenger` for communicating with this engine.
  */
 @property(nonatomic, nonnull, readonly) id<FlutterBinaryMessenger> binaryMessenger;
+
+/**
+ * Shuts the Flutter engine if it is running. The FlutterEngine instance must always be shutdown
+ * before it may be collected. Not shutting down the FlutterEngine instance before releasing it will
+ * result in the leak of that engine instance.
+ */
+- (void)shutDownEngine;
 
 @end
 

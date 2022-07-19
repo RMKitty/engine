@@ -12,25 +12,30 @@
 #include "flutter/shell/common/shell.h"
 #include "flutter/shell/common/thread_host.h"
 #include "flutter/shell/platform/embedder/embedder.h"
-#include "flutter/shell/platform/embedder/embedder_engine.h"
-#include "flutter/shell/platform/embedder/embedder_external_texture_gl.h"
+#include "flutter/shell/platform/embedder/embedder_external_texture_resolver.h"
 #include "flutter/shell/platform/embedder/embedder_thread_host.h"
-
 namespace flutter {
+
+struct ShellArgs;
 
 // The object that is returned to the embedder as an opaque pointer to the
 // instance of the Flutter engine.
 class EmbedderEngine {
  public:
   EmbedderEngine(std::unique_ptr<EmbedderThreadHost> thread_host,
-                 flutter::TaskRunners task_runners,
-                 flutter::Settings settings,
+                 TaskRunners task_runners,
+                 Settings settings,
+                 RunConfiguration run_configuration,
                  Shell::CreateCallback<PlatformView> on_create_platform_view,
                  Shell::CreateCallback<Rasterizer> on_create_rasterizer,
-                 EmbedderExternalTextureGL::ExternalTextureCallback
-                     external_texture_callback);
+                 std::unique_ptr<EmbedderExternalTextureResolver>
+                     external_texture_resolver);
 
   ~EmbedderEngine();
+
+  bool LaunchShell();
+
+  bool CollectShell();
 
   const TaskRunners& GetTaskRunners() const;
 
@@ -38,7 +43,7 @@ class EmbedderEngine {
 
   bool NotifyDestroyed();
 
-  bool Run(RunConfiguration run_configuration);
+  bool RunRootIsolate();
 
   bool IsValid() const;
 
@@ -47,7 +52,7 @@ class EmbedderEngine {
   bool DispatchPointerDataPacket(
       std::unique_ptr<flutter::PointerDataPacket> packet);
 
-  bool SendPlatformMessage(fml::RefPtr<flutter::PlatformMessage> message);
+  bool SendPlatformMessage(std::unique_ptr<PlatformMessage> message);
 
   bool RegisterTexture(int64_t texture);
 
@@ -61,23 +66,32 @@ class EmbedderEngine {
 
   bool DispatchSemanticsAction(int id,
                                flutter::SemanticsAction action,
-                               std::vector<uint8_t> args);
+                               fml::MallocMapping args);
 
   bool OnVsyncEvent(intptr_t baton,
                     fml::TimePoint frame_start_time,
                     fml::TimePoint frame_target_time);
 
-  bool PostRenderThreadTask(fml::closure task);
+  bool ReloadSystemFonts();
+
+  bool PostRenderThreadTask(const fml::closure& task);
 
   bool RunTask(const FlutterTask* task);
+
+  bool PostTaskOnEngineManagedNativeThreads(
+      std::function<void(FlutterNativeThreadType)> closure) const;
+
+  bool ScheduleFrame();
+
+  Shell& GetShell();
 
  private:
   const std::unique_ptr<EmbedderThreadHost> thread_host_;
   TaskRunners task_runners_;
+  RunConfiguration run_configuration_;
+  std::unique_ptr<ShellArgs> shell_args_;
   std::unique_ptr<Shell> shell_;
-  const EmbedderExternalTextureGL::ExternalTextureCallback
-      external_texture_callback_;
-  bool is_valid_ = false;
+  std::unique_ptr<EmbedderExternalTextureResolver> external_texture_resolver_;
 
   FML_DISALLOW_COPY_AND_ASSIGN(EmbedderEngine);
 };

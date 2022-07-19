@@ -36,19 +36,39 @@ struct SwitchDesc {
 #define DEF_SWITCHES_END };
 // clang-format on
 
-#if FLUTTER_RUNTIME_MODE != FLUTTER_RUNTIME_MODE_RELEASE
-
 // List of common and safe VM flags to allow to be passed directly to the VM.
+#if FLUTTER_RELEASE
+
 // clang-format off
-static const std::string gDartFlagsWhitelist[] = {
-    "--max_profile_depth",
-    "--profile_period",
-    "--random_seed",
-    "--enable_mirrors",
+static const std::string kAllowedDartFlags[] = {
+    "--enable-isolate-groups",
+    "--no-enable-isolate-groups",
 };
 // clang-format on
 
-#endif
+#else
+
+// clang-format off
+static const std::string kAllowedDartFlags[] = {
+    "--enable-isolate-groups",
+    "--no-enable-isolate-groups",
+    "--enable_mirrors",
+    "--enable-service-port-fallback",
+    "--max_profile_depth",
+    "--profile_period",
+    "--random_seed",
+    "--sample-buffer-duration",
+    "--trace-kernel",
+    "--trace-reload",
+    "--trace-reload-verbose",
+    "--write-service-info",
+    "--null_assertions",
+    "--strict_null_safety_checks",
+    "--max_subtype_cache_entries",
+};
+// clang-format on
+
+#endif  // FLUTTER_RELEASE
 
 // Include again for struct definition.
 #include "flutter/shell/common/switches.h"
@@ -56,7 +76,7 @@ static const std::string gDartFlagsWhitelist[] = {
 // Define symbols for the ICU data that is linked into the Flutter library on
 // Android.  This is a workaround for crashes seen when doing dynamic lookups
 // of the engine's own symbols on some older versions of Android.
-#if OS_ANDROID
+#if FML_OS_ANDROID
 extern uint8_t _binary_icudtl_dat_start[];
 extern uint8_t _binary_icudtl_dat_end[];
 
@@ -132,22 +152,32 @@ const std::string_view FlagForSwitch(Switch swtch) {
   return std::string_view();
 }
 
-#if FLUTTER_RUNTIME_MODE != FLUTTER_RUNTIME_MODE_RELEASE
+static std::vector<std::string> ParseCommaDelimited(const std::string& input) {
+  std::istringstream ss(input);
+  std::vector<std::string> result;
+  std::string token;
+  while (std::getline(ss, token, ',')) {
+    result.push_back(token);
+  }
+  return result;
+}
 
-static bool IsWhitelistedDartVMFlag(const std::string& flag) {
-  for (uint32_t i = 0; i < fml::size(gDartFlagsWhitelist); ++i) {
-    const std::string& allowed = gDartFlagsWhitelist[i];
-    // Check that the prefix of the flag matches one of the whitelisted flags.
+static bool IsAllowedDartVMFlag(const std::string& flag) {
+  for (uint32_t i = 0; i < fml::size(kAllowedDartFlags); ++i) {
+    const std::string& allowed = kAllowedDartFlags[i];
+    // Check that the prefix of the flag matches one of the allowed flags. This
+    // is to handle cases where flags take arguments, such as in
+    // "--max_profile_depth 1".
+    //
     // We don't need to worry about cases like "--safe --sneaky_dangerous" as
     // the VM will discard these as a single unrecognized flag.
-    if (std::equal(allowed.begin(), allowed.end(), flag.begin())) {
+    if (flag.length() >= allowed.length() &&
+        std::equal(allowed.begin(), allowed.end(), flag.begin())) {
       return true;
     }
   }
   return false;
 }
-
-#endif
 
 template <typename T>
 static bool GetSwitchValue(const fml::CommandLine& command_line,
@@ -171,7 +201,7 @@ static bool GetSwitchValue(const fml::CommandLine& command_line,
 
 std::unique_ptr<fml::Mapping> GetSymbolMapping(std::string symbol_prefix,
                                                std::string native_lib_path) {
-  const uint8_t* mapping;
+  const uint8_t* mapping = nullptr;
   intptr_t size;
 
   auto lookup_symbol = [&mapping, &size, symbol_prefix](
@@ -199,9 +229,18 @@ std::unique_ptr<fml::Mapping> GetSymbolMapping(std::string symbol_prefix,
 Settings SettingsFromCommandLine(const fml::CommandLine& command_line) {
   Settings settings = {};
 
+  // Set executable name.
+  if (command_line.has_argv0()) {
+    settings.executable_name = command_line.argv0();
+  }
+
   // Enable Observatory
   settings.enable_observatory =
       !command_line.HasOption(FlagForSwitch(Switch::DisableObservatory));
+
+  // Enable mDNS Observatory Publication
+  settings.enable_observatory_publication = !command_line.HasOption(
+      FlagForSwitch(Switch::DisableObservatoryPublication));
 
   // Set Observatory Host
   if (command_line.HasOption(FlagForSwitch(Switch::DeviceObservatoryHost))) {
@@ -225,10 +264,21 @@ Settings SettingsFromCommandLine(const fml::CommandLine& command_line) {
     }
   }
 
+  settings.may_insecurely_connect_to_all_domains = !command_line.HasOption(
+      FlagForSwitch(Switch::DisallowInsecureConnections));
+
+  command_line.GetOptionValue(FlagForSwitch(Switch::DomainNetworkPolicy),
+                              &settings.domain_network_policy);
+
   // Disable need for authentication codes for VM service communication, if
   // specified.
   settings.disable_service_auth_codes =
       command_line.HasOption(FlagForSwitch(Switch::DisableServiceAuthCodes));
+
+  // Allow fallback to automatic port selection if binding to a specified port
+  // fails.
+  settings.enable_service_port_fallback =
+      command_line.HasOption(FlagForSwitch(Switch::EnableServicePortFallback));
 
   // Checked mode overrides.
   settings.disable_dart_asserts =
@@ -252,6 +302,35 @@ Settings SettingsFromCommandLine(const fml::CommandLine& command_line) {
   settings.trace_startup =
       command_line.HasOption(FlagForSwitch(Switch::TraceStartup));
 
+  settings.enable_serial_gc =
+      command_line.HasOption(FlagForSwitch(Switch::EnableSerialGC));
+
+#if !FLUTTER_RELEASE
+  settings.trace_skia = true;
+
+  if (command_line.HasOption(FlagForSwitch(Switch::TraceSkia))) {
+    // If --trace-skia is specified, then log all Skia events.
+    settings.trace_skia_allowlist.reset();
+  } else {
+    std::string trace_skia_allowlist;
+    command_line.GetOptionValue(FlagForSwitch(Switch::TraceSkiaAllowlist),
+                                &trace_skia_allowlist);
+    if (trace_skia_allowlist.size()) {
+      settings.trace_skia_allowlist = ParseCommaDelimited(trace_skia_allowlist);
+    } else {
+      settings.trace_skia_allowlist = {"skia.shaders"};
+    }
+  }
+#endif  // !FLUTTER_RELEASE
+
+  std::string trace_allowlist;
+  command_line.GetOptionValue(FlagForSwitch(Switch::TraceAllowlist),
+                              &trace_allowlist);
+  settings.trace_allowlist = ParseCommaDelimited(trace_allowlist);
+
+  settings.trace_systrace =
+      command_line.HasOption(FlagForSwitch(Switch::TraceSystrace));
+
   settings.skia_deterministic_rendering_on_cpu =
       command_line.HasOption(FlagForSwitch(Switch::SkiaDeterministicRendering));
 
@@ -264,6 +343,13 @@ Settings SettingsFromCommandLine(const fml::CommandLine& command_line) {
   std::vector<std::string_view> aot_shared_library_name =
       command_line.GetOptionValues(FlagForSwitch(Switch::AotSharedLibraryName));
 
+  std::vector<std::string_view> vmservice_shared_library_name =
+      command_line.GetOptionValues(
+          FlagForSwitch(Switch::AotVMServiceSharedLibraryName));
+  for (auto path : vmservice_shared_library_name) {
+    settings.vmservice_snapshot_library_path.emplace_back(path);
+  }
+
   std::string snapshot_asset_path;
   command_line.GetOptionValue(FlagForSwitch(Switch::SnapshotAssetPath),
                               &snapshot_asset_path);
@@ -271,6 +357,8 @@ Settings SettingsFromCommandLine(const fml::CommandLine& command_line) {
   std::string vm_snapshot_data_filename;
   command_line.GetOptionValue(FlagForSwitch(Switch::VmSnapshotData),
                               &vm_snapshot_data_filename);
+
+  command_line.GetOptionValue(FlagForSwitch(Switch::Route), &settings.route);
 
   std::string vm_snapshot_instr_filename;
   command_line.GetOptionValue(FlagForSwitch(Switch::VmSnapshotInstructions),
@@ -285,11 +373,11 @@ Settings SettingsFromCommandLine(const fml::CommandLine& command_line) {
       FlagForSwitch(Switch::IsolateSnapshotInstructions),
       &isolate_snapshot_instr_filename);
 
-  if (aot_shared_library_name.size() > 0) {
+  if (!aot_shared_library_name.empty()) {
     for (std::string_view name : aot_shared_library_name) {
       settings.application_library_path.emplace_back(name);
     }
-  } else if (snapshot_asset_path.size() > 0) {
+  } else if (!snapshot_asset_path.empty()) {
     settings.vm_snapshot_data_path =
         fml::paths::JoinPaths({snapshot_asset_path, vm_snapshot_data_filename});
     settings.vm_snapshot_instr_path = fml::paths::JoinPaths(
@@ -303,6 +391,10 @@ Settings SettingsFromCommandLine(const fml::CommandLine& command_line) {
   command_line.GetOptionValue(FlagForSwitch(Switch::CacheDirPath),
                               &settings.temp_directory_path);
 
+  bool leak_vm = "true" == command_line.GetOptionValueWithDefault(
+                               FlagForSwitch(Switch::LeakVM), "true");
+  settings.leak_vm = leak_vm;
+
   if (settings.icu_initialization_required) {
     command_line.GetOptionValue(FlagForSwitch(Switch::ICUDataFilePath),
                                 &settings.icu_data_path);
@@ -313,7 +405,7 @@ Settings SettingsFromCommandLine(const fml::CommandLine& command_line) {
       command_line.GetOptionValue(FlagForSwitch(Switch::ICUNativeLibPath),
                                   &native_lib_path);
 
-#if OS_ANDROID
+#if FML_OS_ANDROID
       settings.icu_mapper = GetICUStaticMapping;
 #else
       settings.icu_mapper = [icu_symbol_prefix, native_lib_path] {
@@ -325,33 +417,83 @@ Settings SettingsFromCommandLine(const fml::CommandLine& command_line) {
 
   settings.use_test_fonts =
       command_line.HasOption(FlagForSwitch(Switch::UseTestFonts));
+  settings.use_asset_fonts =
+      !command_line.HasOption(FlagForSwitch(Switch::DisableAssetFonts));
 
-#if FLUTTER_RUNTIME_MODE != FLUTTER_RUNTIME_MODE_RELEASE
-  command_line.GetOptionValue(FlagForSwitch(Switch::LogTag), &settings.log_tag);
+  std::string enable_skparagraph = command_line.GetOptionValueWithDefault(
+      FlagForSwitch(Switch::EnableSkParagraph), "");
+  settings.enable_skparagraph = enable_skparagraph != "false";
+
+  settings.enable_impeller =
+      command_line.HasOption(FlagForSwitch(Switch::EnableImpeller));
+
+  settings.prefetched_default_font_manager = command_line.HasOption(
+      FlagForSwitch(Switch::PrefetchedDefaultFontManager));
+
   std::string all_dart_flags;
   if (command_line.GetOptionValue(FlagForSwitch(Switch::DartFlags),
                                   &all_dart_flags)) {
-    std::stringstream stream(all_dart_flags);
-    std::string flag;
-
     // Assume that individual flags are comma separated.
-    while (std::getline(stream, flag, ',')) {
-      if (!IsWhitelistedDartVMFlag(flag)) {
-        FML_LOG(FATAL) << "Encountered blacklisted Dart VM flag: " << flag;
+    std::vector<std::string> flags = ParseCommaDelimited(all_dart_flags);
+    for (auto flag : flags) {
+      if (!IsAllowedDartVMFlag(flag)) {
+        FML_LOG(FATAL) << "Encountered disallowed Dart VM flag: " << flag;
       }
       settings.dart_flags.push_back(flag);
     }
   }
 
-  settings.trace_skia =
-      command_line.HasOption(FlagForSwitch(Switch::TraceSkia));
-  settings.trace_systrace =
-      command_line.HasOption(FlagForSwitch(Switch::TraceSystrace));
+#if !FLUTTER_RELEASE
+  command_line.GetOptionValue(FlagForSwitch(Switch::LogTag), &settings.log_tag);
 #endif
 
   settings.dump_skp_on_shader_compilation =
       command_line.HasOption(FlagForSwitch(Switch::DumpSkpOnShaderCompilation));
 
+  settings.cache_sksl =
+      command_line.HasOption(FlagForSwitch(Switch::CacheSkSL));
+
+  settings.purge_persistent_cache =
+      command_line.HasOption(FlagForSwitch(Switch::PurgePersistentCache));
+
+  if (command_line.HasOption(FlagForSwitch(Switch::OldGenHeapSize))) {
+    std::string old_gen_heap_size;
+    command_line.GetOptionValue(FlagForSwitch(Switch::OldGenHeapSize),
+                                &old_gen_heap_size);
+    settings.old_gen_heap_size = std::stoi(old_gen_heap_size);
+  }
+
+  if (command_line.HasOption(
+          FlagForSwitch(Switch::ResourceCacheMaxBytesThreshold))) {
+    std::string resource_cache_max_bytes_threshold;
+    command_line.GetOptionValue(
+        FlagForSwitch(Switch::ResourceCacheMaxBytesThreshold),
+        &resource_cache_max_bytes_threshold);
+    settings.resource_cache_max_bytes_threshold =
+        std::stoi(resource_cache_max_bytes_threshold);
+  }
+
+  if (command_line.HasOption(FlagForSwitch(Switch::MsaaSamples))) {
+    std::string msaa_samples;
+    command_line.GetOptionValue(FlagForSwitch(Switch::MsaaSamples),
+                                &msaa_samples);
+    if (msaa_samples == "0") {
+      settings.msaa_samples = 0;
+    } else if (msaa_samples == "1") {
+      settings.msaa_samples = 1;
+    } else if (msaa_samples == "2") {
+      settings.msaa_samples = 2;
+    } else if (msaa_samples == "4") {
+      settings.msaa_samples = 4;
+    } else if (msaa_samples == "8") {
+      settings.msaa_samples = 8;
+    } else if (msaa_samples == "16") {
+      settings.msaa_samples = 16;
+    } else {
+      FML_DLOG(ERROR) << "Invalid value for --msaa-samples: '" << msaa_samples
+                      << "' (expected 0, 1, 2, 4, 8, or 16).";
+    }
+  }
   return settings;
 }
 

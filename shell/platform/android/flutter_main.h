@@ -27,7 +27,7 @@ class FlutterMain {
   const flutter::Settings settings_;
   DartServiceIsolate::CallbackHandle observatory_uri_callback_;
 
-  FlutterMain(flutter::Settings settings);
+  explicit FlutterMain(flutter::Settings settings);
 
   static void Init(JNIEnv* env,
                    jclass clazz,
@@ -35,7 +35,8 @@ class FlutterMain {
                    jobjectArray jargs,
                    jstring kernelPath,
                    jstring appStoragePath,
-                   jstring engineCachesPath);
+                   jstring engineCachesPath,
+                   jlong initTimeMillis);
 
   void SetupObservatoryUriCallback(JNIEnv* env);
 

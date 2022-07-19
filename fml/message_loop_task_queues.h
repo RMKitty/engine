@@ -7,27 +7,48 @@
 
 #include <map>
 #include <mutex>
+#include <set>
 #include <vector>
 
 #include "flutter/fml/closure.h"
 #include "flutter/fml/delayed_task.h"
 #include "flutter/fml/macros.h"
 #include "flutter/fml/memory/ref_counted.h"
-#include "flutter/fml/synchronization/thread_annotations.h"
+#include "flutter/fml/synchronization/shared_mutex.h"
+#include "flutter/fml/task_queue_id.h"
+#include "flutter/fml/task_source.h"
 #include "flutter/fml/wakeable.h"
 
 namespace fml {
 
-class TaskQueueId {
+static const TaskQueueId _kUnmerged = TaskQueueId(TaskQueueId::kUnmerged);
+
+/// A collection of tasks and observers associated with one TaskQueue.
+///
+/// Often a TaskQueue has a one-to-one relationship with a fml::MessageLoop,
+/// this isn't the case when TaskQueues are merged via
+/// \p fml::MessageLoopTaskQueues::Merge.
+class TaskQueueEntry {
  public:
-  static const size_t kUnmerged;
+  using TaskObservers = std::map<intptr_t, fml::closure>;
+  Wakeable* wakeable;
+  TaskObservers task_observers;
+  std::unique_ptr<TaskSource> task_source;
 
-  explicit TaskQueueId(size_t value) : value_(value) {}
+  /// Set of the TaskQueueIds which is owned by this TaskQueue. If the set is
+  /// empty, this TaskQueue does not own any other TaskQueues.
+  std::set<TaskQueueId> owner_of;
 
-  operator int() const { return value_; }
+  /// Identifies the TaskQueue that subsumes this TaskQueue. If it is _kUnmerged
+  /// it indicates that this TaskQueue is not owned by any other TaskQueue.
+  TaskQueueId subsumed_by;
+
+  TaskQueueId created_for;
+
+  explicit TaskQueueEntry(TaskQueueId created_for);
 
  private:
-  size_t value_ = kUnmerged;
+  FML_DISALLOW_COPY_ASSIGN_AND_MOVE(TaskQueueEntry);
 };
 
 enum class FlushType {
@@ -35,47 +56,51 @@ enum class FlushType {
   kAll,
 };
 
-// This class keeps track of all the tasks and observers that
-// need to be run on it's MessageLoopImpl. This also wakes up the
-// loop at the required times.
-class MessageLoopTaskQueues
-    : public fml::RefCountedThreadSafe<MessageLoopTaskQueues> {
+/// A singleton container for all tasks and observers associated with all
+/// fml::MessageLoops.
+///
+/// This also wakes up the loop at the required times.
+/// \see fml::MessageLoop
+/// \see fml::Wakeable
+class MessageLoopTaskQueues {
  public:
   // Lifecycle.
 
-  static fml::RefPtr<MessageLoopTaskQueues> GetInstance();
+  static MessageLoopTaskQueues* GetInstance();
 
   TaskQueueId CreateTaskQueue();
 
   void Dispose(TaskQueueId queue_id);
 
+  void DisposeTasks(TaskQueueId queue_id);
+
   // Tasks methods.
 
   void RegisterTask(TaskQueueId queue_id,
-                    fml::closure task,
-                    fml::TimePoint target_time);
+                    const fml::closure& task,
+                    fml::TimePoint target_time,
+                    fml::TaskSourceGrade task_source_grade =
+                        fml::TaskSourceGrade::kUnspecified);
 
-  bool HasPendingTasks(TaskQueueId queue_id);
+  bool HasPendingTasks(TaskQueueId queue_id) const;
 
-  void GetTasksToRunNow(TaskQueueId queue_id,
-                        FlushType type,
-                        std::vector<fml::closure>& invocations);
+  fml::closure GetNextTaskToRun(TaskQueueId queue_id, fml::TimePoint from_time);
 
-  size_t GetNumPendingTasks(TaskQueueId queue_id);
+  size_t GetNumPendingTasks(TaskQueueId queue_id) const;
+
+  static TaskSourceGrade GetCurrentTaskSourceGrade();
 
   // Observers methods.
 
   void AddTaskObserver(TaskQueueId queue_id,
                        intptr_t key,
-                       fml::closure callback);
+                       const fml::closure& callback);
 
   void RemoveTaskObserver(TaskQueueId queue_id, intptr_t key);
 
-  void NotifyObservers(TaskQueueId queue_id);
+  std::vector<fml::closure> GetObserversToNotify(TaskQueueId queue_id) const;
 
   // Misc.
-
-  void Swap(TaskQueueId primary, TaskQueueId secondary);
 
   void SetWakeable(TaskQueueId queue_id, fml::Wakeable* wakeable);
 
@@ -84,75 +109,55 @@ class MessageLoopTaskQueues
   //     to it. It is not aware of whether a queue is merged or not. Same with
   //     task observers.
   //  2. When we get the tasks to run now, we look at both the queue_ids
-  //     for the owner, subsumed will spin.
-  //  3. Each task queue can only be merged and subsumed once.
+  //     for the owner and the subsumed task queues.
+  //  3. One TaskQueue can subsume multiple other TaskQueues. A TaskQueue can be
+  //     in exactly one of the following three states:
+  //     a. Be an owner of multiple other TaskQueues.
+  //     b. Be subsumed by a TaskQueue (an owner can never be subsumed).
+  //     c. Be independent, i.e, neither owner nor be subsumed.
   //
   //  Methods currently aware of the merged state of the queues:
-  //  HasPendingTasks, GetTasksToRunNow, GetNumPendingTasks
-
-  // This method returns false if either the owner or subsumed has already been
-  // merged with something else.
+  //  HasPendingTasks, GetNextTaskToRun, GetNumPendingTasks
   bool Merge(TaskQueueId owner, TaskQueueId subsumed);
 
-  // Will return false if the owner has not been merged before.
-  bool Unmerge(TaskQueueId owner);
+  // Will return false if the owner has not been merged before, or owner was
+  // subsumed by others, or subsumed wasn't subsumed by others, or owner
+  // didn't own the given subsumed queue id.
+  bool Unmerge(TaskQueueId owner, TaskQueueId subsumed);
 
-  // Returns true if owner owns the subsumed task queue.
-  bool Owns(TaskQueueId owner, TaskQueueId subsumed);
+  /// Returns \p true if \p owner owns the \p subsumed task queue.
+  bool Owns(TaskQueueId owner, TaskQueueId subsumed) const;
+
+  // Returns the subsumed task queue if any or |TaskQueueId::kUnmerged|
+  // otherwise.
+  std::set<TaskQueueId> GetSubsumedTaskQueueId(TaskQueueId owner) const;
+
+  void PauseSecondarySource(TaskQueueId queue_id);
+
+  void ResumeSecondarySource(TaskQueueId queue_id);
 
  private:
   class MergedQueuesRunner;
-
-  enum class MutexType {
-    kTasks,
-    kObservers,
-    kWakeables,
-  };
-
-  using Mutexes = std::vector<std::unique_ptr<std::mutex>>;
-  using TaskObservers = std::map<intptr_t, fml::closure>;
 
   MessageLoopTaskQueues();
 
   ~MessageLoopTaskQueues();
 
-  void WakeUp(TaskQueueId queue_id, fml::TimePoint time);
+  void WakeUpUnlocked(TaskQueueId queue_id, fml::TimePoint time) const;
 
-  bool HasPendingTasksUnlocked(TaskQueueId queue_id);
+  bool HasPendingTasksUnlocked(TaskQueueId queue_id) const;
 
-  const DelayedTask& PeekNextTaskUnlocked(TaskQueueId queue_id,
-                                          TaskQueueId& top_queue_id);
+  TaskSource::TopTask PeekNextTaskUnlocked(TaskQueueId owner) const;
 
-  fml::TimePoint GetNextWakeTimeUnlocked(TaskQueueId queue_id);
+  fml::TimePoint GetNextWakeTimeUnlocked(TaskQueueId queue_id) const;
 
-  std::mutex& GetMutex(TaskQueueId queue_id, MutexType type);
+  mutable std::mutex queue_mutex_;
+  std::map<TaskQueueId, std::unique_ptr<TaskQueueEntry>> queue_entries_;
 
-  static std::mutex creation_mutex_;
-  static fml::RefPtr<MessageLoopTaskQueues> instance_
-      FML_GUARDED_BY(creation_mutex_);
-
-  std::mutex queue_meta_mutex_;
-
-  size_t task_queue_id_counter_ FML_GUARDED_BY(queue_meta_mutex_);
-
-  Mutexes observers_mutexes_ FML_GUARDED_BY(queue_meta_mutex_);
-  Mutexes delayed_tasks_mutexes_ FML_GUARDED_BY(queue_meta_mutex_);
-  Mutexes wakeable_mutexes_ FML_GUARDED_BY(queue_meta_mutex_);
-
-  // These are guarded by their corresponding `Mutexes`
-  std::vector<Wakeable*> wakeables_;
-  std::vector<TaskObservers> task_observers_;
-  std::vector<DelayedTaskQueue> delayed_tasks_;
-
-  static const TaskQueueId _kUnmerged;
-  // These are guarded by delayed_tasks_mutexes_
-  std::vector<TaskQueueId> owner_to_subsumed_;
-  std::vector<TaskQueueId> subsumed_to_owner_;
+  size_t task_queue_id_counter_;
 
   std::atomic_int order_;
 
-  FML_FRIEND_MAKE_REF_COUNTED(MessageLoopTaskQueues);
-  FML_FRIEND_REF_COUNTED_THREAD_SAFE(MessageLoopTaskQueues);
   FML_DISALLOW_COPY_ASSIGN_AND_MOVE(MessageLoopTaskQueues);
 };
 

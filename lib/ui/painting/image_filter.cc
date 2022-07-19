@@ -5,9 +5,7 @@
 #include "flutter/lib/ui/painting/image_filter.h"
 
 #include "flutter/lib/ui/painting/matrix.h"
-#include "third_party/skia/include/effects/SkBlurImageFilter.h"
-#include "third_party/skia/include/effects/SkImageSource.h"
-#include "third_party/skia/include/effects/SkPictureImageFilter.h"
+#include "flutter/lib/ui/ui_dart_state.h"
 #include "third_party/tonic/converter/dart_converter.h"
 #include "third_party/tonic/dart_args.h"
 #include "third_party/tonic/dart_binding_macros.h"
@@ -15,52 +13,75 @@
 
 namespace flutter {
 
-static void ImageFilter_constructor(Dart_NativeArguments args) {
-  DartCallConstructor(&ImageFilter::Create, args);
-}
-
 IMPLEMENT_WRAPPERTYPEINFO(ui, ImageFilter);
 
-#define FOR_EACH_BINDING(V)   \
-  V(ImageFilter, initImage)   \
-  V(ImageFilter, initPicture) \
-  V(ImageFilter, initBlur)    \
-  V(ImageFilter, initMatrix)
-
-FOR_EACH_BINDING(DART_NATIVE_CALLBACK)
-
-void ImageFilter::RegisterNatives(tonic::DartLibraryNatives* natives) {
-  natives->Register(
-      {{"ImageFilter_constructor", ImageFilter_constructor, 1, true},
-       FOR_EACH_BINDING(DART_REGISTER_NATIVE)});
+void ImageFilter::Create(Dart_Handle wrapper) {
+  UIDartState::ThrowIfUIOperationsProhibited();
+  auto res = fml::MakeRefCounted<ImageFilter>();
+  res->AssociateWithDartWrapper(wrapper);
 }
 
-fml::RefPtr<ImageFilter> ImageFilter::Create() {
-  return fml::MakeRefCounted<ImageFilter>();
+static const std::array<DlImageSampling, 4> kFilterQualities = {
+    DlImageSampling::kNearestNeighbor,
+    DlImageSampling::kLinear,
+    DlImageSampling::kMipmapLinear,
+    DlImageSampling::kCubic,
+};
+
+DlImageSampling ImageFilter::SamplingFromIndex(int filterQualityIndex) {
+  if (filterQualityIndex < 0) {
+    return kFilterQualities.front();
+  } else if (static_cast<size_t>(filterQualityIndex) >=
+             kFilterQualities.size()) {
+    return kFilterQualities.back();
+  } else {
+    return kFilterQualities[filterQualityIndex];
+  }
+}
+
+DlFilterMode ImageFilter::FilterModeFromIndex(int filterQualityIndex) {
+  if (filterQualityIndex <= 0) {
+    return DlFilterMode::kNearest;
+  }
+  return DlFilterMode::kLinear;
 }
 
 ImageFilter::ImageFilter() {}
 
 ImageFilter::~ImageFilter() {}
 
-void ImageFilter::initImage(CanvasImage* image) {
-  filter_ = SkImageSource::Make(image->image());
+void ImageFilter::initBlur(double sigma_x,
+                           double sigma_y,
+                           SkTileMode tile_mode) {
+  filter_ =
+      std::make_shared<DlBlurImageFilter>(sigma_x, sigma_y, ToDl(tile_mode));
 }
 
-void ImageFilter::initPicture(Picture* picture) {
-  filter_ = SkPictureImageFilter::Make(picture->picture());
+void ImageFilter::initDilate(double radius_x, double radius_y) {
+  filter_ = std::make_shared<DlDilateImageFilter>(radius_x, radius_y);
 }
 
-void ImageFilter::initBlur(double sigma_x, double sigma_y) {
-  filter_ = SkBlurImageFilter::Make(sigma_x, sigma_y, nullptr, nullptr,
-                                    SkBlurImageFilter::kClamp_TileMode);
+void ImageFilter::initErode(double radius_x, double radius_y) {
+  filter_ = std::make_shared<DlErodeImageFilter>(radius_x, radius_y);
 }
 
 void ImageFilter::initMatrix(const tonic::Float64List& matrix4,
-                             int filterQuality) {
-  filter_ = SkImageFilter::MakeMatrixFilter(
-      ToSkMatrix(matrix4), static_cast<SkFilterQuality>(filterQuality),
-      nullptr);
+                             int filterQualityIndex) {
+  auto sampling = ImageFilter::SamplingFromIndex(filterQualityIndex);
+  filter_ =
+      std::make_shared<DlMatrixImageFilter>(ToSkMatrix(matrix4), sampling);
+}
+
+void ImageFilter::initColorFilter(ColorFilter* colorFilter) {
+  FML_DCHECK(colorFilter);
+  filter_ =
+      std::make_shared<DlColorFilterImageFilter>(colorFilter->dl_filter());
+}
+
+void ImageFilter::initComposeFilter(ImageFilter* outer, ImageFilter* inner) {
+  FML_DCHECK(outer && inner);
+  filter_ = std::make_shared<DlComposeImageFilter>(outer->dl_filter(),
+                                                   inner->dl_filter());
 }
 
 }  // namespace flutter

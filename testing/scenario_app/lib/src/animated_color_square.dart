@@ -15,10 +15,10 @@ import 'scenario.dart';
 class AnimatedColorSquareScenario extends Scenario {
   /// Creates the AnimatedColorSquare scenario.
   ///
-  /// The [window] parameter must not be null.
-  AnimatedColorSquareScenario(Window window)
-      : assert(window != null),
-        super(window);
+  /// The [dispatcher] parameter must not be null.
+  AnimatedColorSquareScenario(PlatformDispatcher dispatcher)
+      : assert(dispatcher != null),
+        super(dispatcher);
 
   static const double _squareSize = 200;
   /// Used to animate the red value in the color of the square.
@@ -76,11 +76,11 @@ class AnimatedColorSquareScenario extends Scenario {
 }
 
 class _NumberSwinger<T extends num> {
-  _NumberSwinger(this._begin, this._end, [this._current])
+  _NumberSwinger(this._begin, this._end, [T? current])
       : assert(_begin != null),
         assert(_end != null),
         _up = _begin < _end {
-    _current ??= _begin;
+    _current = current ?? _begin;
   }
 
   final T _begin;
@@ -88,7 +88,7 @@ class _NumberSwinger<T extends num> {
 
   /// The current value of the swinger.
   T get current => _current;
-  T _current;
+  late T _current;
 
   bool _up;
 
@@ -98,7 +98,7 @@ class _NumberSwinger<T extends num> {
     } else if (_current <= _begin) {
       _up = true;
     }
-    _current = _up ? _current + 1 : _current - 1;
+    _current = (_up ? _current + 1 : _current - 1) as T;
     return _current;
   }
 }

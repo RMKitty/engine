@@ -8,7 +8,7 @@
 #include "third_party/tonic/logging/dart_error.h"
 #include "third_party/tonic/typed_data/typed_list.h"
 
-using namespace flutter;
+using flutter::RRect;
 
 namespace tonic {
 
@@ -20,8 +20,9 @@ RRect DartConverter<flutter::RRect>::FromDart(Dart_Handle value) {
 
   RRect result;
   result.is_null = true;
-  if (buffer.data() == nullptr)
+  if (buffer.data() == nullptr) {
     return result;
+  }
 
   SkVector radii[4] = {{buffer[4], buffer[5]},
                        {buffer[6], buffer[7]},
@@ -39,7 +40,7 @@ RRect DartConverter<flutter::RRect>::FromArguments(Dart_NativeArguments args,
                                                    int index,
                                                    Dart_Handle& exception) {
   Dart_Handle value = Dart_GetNativeArgument(args, index);
-  FML_DCHECK(!LogIfError(value));
+  FML_DCHECK(!CheckAndHandleError(value));
   return FromDart(value);
 }
 

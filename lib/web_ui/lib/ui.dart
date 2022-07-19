@@ -8,34 +8,29 @@
 library ui;
 
 import 'dart:async';
-import 'dart:collection';
-import 'dart:html' as html;
+import 'dart:collection' as collection;
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'src/engine.dart' as engine;
-export 'src/engine.dart'
-    show persistedPictureFactory, houdiniPictureFactory, platformViewRegistry;
 
-part 'src/ui/canvas.dart';
-part 'src/ui/compositing.dart';
-part 'src/ui/geometry.dart';
-part 'src/ui/hash_codes.dart';
-part 'src/ui/initialization.dart';
-part 'src/ui/lerp.dart';
-part 'src/ui/natives.dart';
-part 'src/ui/painting.dart';
-part 'src/ui/pointer.dart';
-part 'src/ui/semantics.dart';
-part 'src/ui/test_embedding.dart';
-part 'src/ui/text.dart';
-part 'src/ui/tile_mode.dart';
-part 'src/ui/window.dart';
-
-/// Provides a compile time constant to customize flutter framework and other
-/// users of ui engine for web runtime.
-const bool isWeb = true;
-
-/// Web specific SMI. Used by bitfield. The 0x3FFFFFFFFFFFFFFF used on VM
-/// is not supported on Web platform.
-const int kMaxUnsignedSMI = -1;
+part 'annotations.dart';
+part 'canvas.dart';
+part 'channel_buffers.dart';
+part 'compositing.dart';
+part 'geometry.dart';
+part 'hash_codes.dart';
+part 'initialization.dart';
+part 'key.dart';
+part 'lerp.dart';
+part 'natives.dart';
+part 'painting.dart';
+part 'path.dart';
+part 'path_metrics.dart';
+part 'platform_dispatcher.dart';
+part 'pointer.dart';
+part 'semantics.dart';
+part 'text.dart';
+part 'tile_mode.dart';
+part 'window.dart';

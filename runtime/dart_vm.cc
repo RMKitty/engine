@@ -6,26 +6,20 @@
 
 #include <sys/stat.h>
 
-#include <mutex>
+#include <sstream>
 #include <vector>
 
 #include "flutter/common/settings.h"
 #include "flutter/fml/compiler_specific.h"
-#include "flutter/fml/file.h"
 #include "flutter/fml/logging.h"
 #include "flutter/fml/mapping.h"
 #include "flutter/fml/size.h"
-#include "flutter/fml/synchronization/count_down_latch.h"
-#include "flutter/fml/synchronization/thread_annotations.h"
 #include "flutter/fml/time/time_delta.h"
 #include "flutter/fml/trace_event.h"
-#include "flutter/lib/io/dart_io.h"
-#include "flutter/lib/ui/dart_runtime_hooks.h"
 #include "flutter/lib/ui/dart_ui.h"
 #include "flutter/runtime/dart_isolate.h"
-#include "flutter/runtime/dart_service_isolate.h"
-#include "flutter/runtime/ptrace_ios.h"
-#include "flutter/runtime/start_up.h"
+#include "flutter/runtime/dart_vm_initializer.h"
+#include "flutter/runtime/ptrace_check.h"
 #include "third_party/dart/runtime/include/bin/dart_io_api.h"
 #include "third_party/skia/include/core/SkExecutor.h"
 #include "third_party/tonic/converter/dart_converter.h"
@@ -33,13 +27,12 @@
 #include "third_party/tonic/dart_class_provider.h"
 #include "third_party/tonic/file_loader/file_loader.h"
 #include "third_party/tonic/logging/dart_error.h"
-#include "third_party/tonic/scopes/dart_api_scope.h"
 #include "third_party/tonic/typed_data/typed_list.h"
 
 namespace dart {
 namespace observatory {
 
-#if !OS_FUCHSIA && (FLUTTER_RUNTIME_MODE != FLUTTER_RUNTIME_MODE_RELEASE)
+#if !OS_FUCHSIA && !FLUTTER_RELEASE
 
 // These two symbols are defined in |observatory_archive.cc| which is generated
 // by the |//third_party/dart/runtime/observatory:archive_observatory| rule.
@@ -48,8 +41,7 @@ namespace observatory {
 extern unsigned int observatory_assets_archive_len;
 extern const uint8_t* observatory_assets_archive;
 
-#endif  // !OS_FUCHSIA && (FLUTTER_RUNTIME_MODE !=
-        // FLUTTER_RUNTIME_MODE_RELEASE)
+#endif  // !OS_FUCHSIA && !FLUTTER_RELEASE
 
 }  // namespace observatory
 }  // namespace dart
@@ -57,16 +49,25 @@ extern const uint8_t* observatory_assets_archive;
 namespace flutter {
 
 // Arguments passed to the Dart VM in all configurations.
-static const char* kDartLanguageArgs[] = {
+static const char* kDartAllConfigsArgs[] = {
     // clang-format off
     "--enable_mirrors=false",
     "--background_compilation",
-    "--causal_async_stacks",
+    // 'mark_when_idle' appears to cause a regression, turning off for now.
+    // "--mark_when_idle",
     // clang-format on
 };
 
-static const char* kDartPrecompilationArgs[] = {
-    "--precompilation",
+static const char* kDartPrecompilationArgs[] = {"--precompilation"};
+
+static const char* kSerialGCArgs[] = {
+    // clang-format off
+    "--concurrent_mark=false",
+    "--concurrent_sweep=false",
+    "--compactor_tasks=1",
+    "--scavenger_tasks=0",
+    "--marker_tasks=0",
+    // clang-format on
 };
 
 FML_ALLOW_UNUSED_TYPE
@@ -93,25 +94,33 @@ static const char* kDartDisableServiceAuthCodesArgs[]{
     "--disable-service-auth-codes",
 };
 
-static const char* kDartTraceStartupArgs[]{
-    "--timeline_streams=Compiler,Dart,Debugger,Embedder,GC,Isolate,VM",
-};
-
 static const char* kDartEndlessTraceBufferArgs[]{
     "--timeline_recorder=endless",
 };
 
-static const char* kDartSystraceTraceBufferArgs[]{
-    "--timeline_recorder=systrace",
-};
-
-static const char* kDartFuchsiaTraceArgs[] FML_ALLOW_UNUSED_TYPE = {
+// This is the same as --timeline_recorder=systrace.
+static const char* kDartSystraceTraceBufferArgs[] = {
     "--systrace_timeline",
 };
 
-static const char* kDartTraceStreamsArgs[] = {
-    "--timeline_streams=Compiler,Dart,Debugger,Embedder,GC,Isolate,VM",
+FML_ALLOW_UNUSED_TYPE
+static const char* kDartDefaultTraceStreamsArgs[]{
+    "--timeline_streams=Dart,Embedder,GC",
 };
+
+static const char* kDartStartupTraceStreamsArgs[]{
+    "--timeline_streams=Compiler,Dart,Debugger,Embedder,GC,Isolate,VM,API",
+};
+
+static const char* kDartSystraceTraceStreamsArgs[] = {
+    "--timeline_streams=Compiler,Dart,Debugger,Embedder,GC,Isolate,VM,API",
+};
+
+static std::string DartOldGenHeapSizeArgs(uint64_t heap_size) {
+  std::ostringstream oss;
+  oss << "--old_gen_heap_size=" << heap_size;
+  return oss.str();
+}
 
 constexpr char kFileUriPrefix[] = "file://";
 constexpr size_t kFileUriPrefixLength = sizeof(kFileUriPrefix) - 1;
@@ -124,13 +133,15 @@ bool DartFileModifiedCallback(const char* source_url, int64_t since_ms) {
 
   const char* path = source_url + kFileUriPrefixLength;
   struct stat info;
-  if (stat(path, &info) < 0)
+  if (stat(path, &info) < 0) {
     return true;
+  }
 
   // If st_mtime is zero, it's more likely that the file system doesn't support
   // mtime than that the file was actually modified in the 1970s.
-  if (!info.st_mtime)
+  if (!info.st_mtime) {
     return true;
+  }
 
   // It's very unclear what time bases we're with here. The Dart API doesn't
   // document the time base for since_ms. Reading the code, the value varies by
@@ -148,7 +159,7 @@ bool DartFileModifiedCallback(const char* source_url, int64_t since_ms) {
 void ThreadExitCallback() {}
 
 Dart_Handle GetVMServiceAssetsArchiveCallback() {
-#if (FLUTTER_RUNTIME_MODE == FLUTTER_RUNTIME_MODE_RELEASE)
+#if FLUTTER_RELEASE
   return nullptr;
 #elif OS_FUCHSIA
   fml::UniqueFD fd = fml::OpenFile("pkg/data/observatory.tar", false,
@@ -205,11 +216,25 @@ static std::vector<const char*> ProfilingFlags(bool enable_profiling) {
   // the VM enables the same by default. In either case, we have some profiling
   // flags.
   if (enable_profiling) {
-    return {// This is the default. But just be explicit.
-            "--profiler",
-            // This instructs the profiler to walk C++ frames, and to include
-            // them in the profile.
-            "--profile-vm"};
+    return {
+      // This is the default. But just be explicit.
+      "--profiler",
+          // This instructs the profiler to walk C++ frames, and to include
+          // them in the profile.
+          "--profile-vm",
+#if FML_OS_IOS && FML_ARCH_CPU_ARM_FAMILY && FML_ARCH_CPU_ARMEL
+          // Set the profiler interrupt period to 500Hz instead of the
+          // default 1000Hz on 32-bit iOS devices to reduce average and worst
+          // case frame build times.
+          //
+          // Note: profile_period is time in microseconds between sampling
+          // events, not frequency. Frequency is calculated 1/period (or
+          // 1,000,000 / 2,000 -> 500Hz in this case).
+          "--profile_period=2000",
+#else
+          "--profile_period=1000",
+#endif  // FML_OS_IOS && FML_ARCH_CPU_ARM_FAMILY && FML_ARCH_CPU_ARMEL
+    };
   } else {
     return {"--no-profiler"};
   }
@@ -231,18 +256,16 @@ static void EmbedderInformationCallback(Dart_EmbedderInformation* info) {
 
 std::shared_ptr<DartVM> DartVM::Create(
     Settings settings,
-    fml::RefPtr<DartSnapshot> vm_snapshot,
-    fml::RefPtr<DartSnapshot> isolate_snapshot,
-    fml::RefPtr<DartSnapshot> shared_snapshot,
+    fml::RefPtr<const DartSnapshot> vm_snapshot,
+    fml::RefPtr<const DartSnapshot> isolate_snapshot,
     std::shared_ptr<IsolateNameServer> isolate_name_server) {
-  auto vm_data = DartVMData::Create(settings,                     //
-                                    std::move(vm_snapshot),       //
-                                    std::move(isolate_snapshot),  //
-                                    std::move(shared_snapshot)    //
+  auto vm_data = DartVMData::Create(settings,                    //
+                                    std::move(vm_snapshot),      //
+                                    std::move(isolate_snapshot)  //
   );
 
   if (!vm_data) {
-    FML_LOG(ERROR) << "Could not setup VM data to bootstrap the VM from.";
+    FML_LOG(ERROR) << "Could not set up VM data to bootstrap the VM from.";
     return {};
   }
 
@@ -279,9 +302,6 @@ DartVM::DartVM(std::shared_ptr<const DartVMData> vm_data,
   FML_DCHECK(isolate_name_server_);
   FML_DCHECK(service_protocol_);
 
-  FML_DLOG(INFO) << "Attempting Dart VM launch for mode: "
-                 << (IsRunningPrecompiledCode() ? "AOT" : "Interpreter");
-
   {
     TRACE_EVENT0("flutter", "dart::bin::BootstrapDartIo");
     dart::bin::BootstrapDartIo();
@@ -304,7 +324,7 @@ DartVM::DartVM(std::shared_ptr<const DartVMData> vm_data,
     args.push_back(profiler_flag);
   }
 
-  PushBackAll(&args, kDartLanguageArgs, fml::size(kDartLanguageArgs));
+  PushBackAll(&args, kDartAllConfigsArgs, fml::size(kDartAllConfigsArgs));
 
   if (IsRunningPrecompiledCode()) {
     PushBackAll(&args, kDartPrecompilationArgs,
@@ -322,13 +342,18 @@ DartVM::DartVM(std::shared_ptr<const DartVMData> vm_data,
 #endif  // !OS_FUCHSIA
 
 #if (FLUTTER_RUNTIME_MODE == FLUTTER_RUNTIME_MODE_DEBUG)
-#if !OS_IOS || TARGET_OS_SIMULATOR
+#if !FML_OS_IOS && !FML_OS_MACOSX
   // Debug mode uses the JIT, disable code page write protection to avoid
   // memory page protection changes before and after every compilation.
   PushBackAll(&args, kDartWriteProtectCodeArgs,
               fml::size(kDartWriteProtectCodeArgs));
 #else
-  EnsureDebuggedIOS(settings_);
+  const bool tracing_result = EnableTracingIfNecessary(settings_);
+  // This check should only trip if the embedding made no attempts to enable
+  // tracing. At this point, it is too late display user visible messages. Just
+  // log and die.
+  FML_CHECK(tracing_result)
+      << "Tracing not enabled before attempting to run JIT mode VM.";
 #if TARGET_CPU_ARM
   // Tell Dart in JIT mode to not use integer division on armv7
   // Ideally, this would be detected at runtime by Dart.
@@ -337,11 +362,18 @@ DartVM::DartVM(std::shared_ptr<const DartVMData> vm_data,
   PushBackAll(&args, kDartDisableIntegerDivisionArgs,
               fml::size(kDartDisableIntegerDivisionArgs));
 #endif  // TARGET_CPU_ARM
-#endif  // !OS_IOS || TARGET_OS_SIMULATOR
+#endif  // !FML_OS_IOS && !FML_OS_MACOSX
 #endif  // (FLUTTER_RUNTIME_MODE == FLUTTER_RUNTIME_MODE_DEBUG)
 
   if (enable_asserts) {
     PushBackAll(&args, kDartAssertArgs, fml::size(kDartAssertArgs));
+  }
+
+  // On low power devices with lesser number of cores, using concurrent
+  // marking or sweeping causes contention for the UI thread leading to
+  // Jank, this option can be used to turn off all concurrent GC activities.
+  if (settings_.enable_serial_gc) {
+    PushBackAll(&args, kSerialGCArgs, fml::size(kSerialGCArgs));
   }
 
   if (settings_.start_paused) {
@@ -363,20 +395,37 @@ DartVM::DartVM(std::shared_ptr<const DartVMData> vm_data,
   if (settings_.trace_systrace) {
     PushBackAll(&args, kDartSystraceTraceBufferArgs,
                 fml::size(kDartSystraceTraceBufferArgs));
-    PushBackAll(&args, kDartTraceStreamsArgs, fml::size(kDartTraceStreamsArgs));
+    PushBackAll(&args, kDartSystraceTraceStreamsArgs,
+                fml::size(kDartSystraceTraceStreamsArgs));
   }
 
   if (settings_.trace_startup) {
-    PushBackAll(&args, kDartTraceStartupArgs, fml::size(kDartTraceStartupArgs));
+    PushBackAll(&args, kDartStartupTraceStreamsArgs,
+                fml::size(kDartStartupTraceStreamsArgs));
   }
 
 #if defined(OS_FUCHSIA)
-  PushBackAll(&args, kDartFuchsiaTraceArgs, fml::size(kDartFuchsiaTraceArgs));
-  PushBackAll(&args, kDartTraceStreamsArgs, fml::size(kDartTraceStreamsArgs));
-#endif
+  PushBackAll(&args, kDartSystraceTraceBufferArgs,
+              fml::size(kDartSystraceTraceBufferArgs));
+  PushBackAll(&args, kDartSystraceTraceStreamsArgs,
+              fml::size(kDartSystraceTraceStreamsArgs));
+#else
+  if (!settings_.trace_systrace && !settings_.trace_startup) {
+    PushBackAll(&args, kDartDefaultTraceStreamsArgs,
+                fml::size(kDartDefaultTraceStreamsArgs));
+  }
+#endif  // defined(OS_FUCHSIA)
 
-  for (size_t i = 0; i < settings_.dart_flags.size(); i++)
+  std::string old_gen_heap_size_args;
+  if (settings_.old_gen_heap_size >= 0) {
+    old_gen_heap_size_args =
+        DartOldGenHeapSizeArgs(settings_.old_gen_heap_size);
+    args.push_back(old_gen_heap_size_args.c_str());
+  }
+
+  for (size_t i = 0; i < settings_.dart_flags.size(); i++) {
     args.push_back(settings_.dart_flags[i].c_str());
+  }
 
   char* flags_error = Dart_SetVMFlags(args.size(), args.data());
   if (flags_error) {
@@ -384,7 +433,7 @@ DartVM::DartVM(std::shared_ptr<const DartVMData> vm_data,
     ::free(flags_error);
   }
 
-  DartUI::InitForGlobal();
+  dart::bin::SetExecutableName(settings_.executable_name.c_str());
 
   {
     TRACE_EVENT0("flutter", "Dart_Initialize");
@@ -395,32 +444,40 @@ DartVM::DartVM(std::shared_ptr<const DartVMData> vm_data,
         vm_data_->GetVMSnapshot().GetInstructionsMapping();
     params.create_group = reinterpret_cast<decltype(params.create_group)>(
         DartIsolate::DartIsolateGroupCreateCallback);
+    params.initialize_isolate =
+        reinterpret_cast<decltype(params.initialize_isolate)>(
+            DartIsolate::DartIsolateInitializeCallback);
     params.shutdown_isolate =
         reinterpret_cast<decltype(params.shutdown_isolate)>(
             DartIsolate::DartIsolateShutdownCallback);
+    params.cleanup_isolate = reinterpret_cast<decltype(params.cleanup_isolate)>(
+        DartIsolate::DartIsolateCleanupCallback);
     params.cleanup_group = reinterpret_cast<decltype(params.cleanup_group)>(
         DartIsolate::DartIsolateGroupCleanupCallback);
     params.thread_exit = ThreadExitCallback;
-    params.get_service_assets = GetVMServiceAssetsArchiveCallback;
+    params.file_open = dart::bin::OpenFile;
+    params.file_read = dart::bin::ReadFile;
+    params.file_write = dart::bin::WriteFile;
+    params.file_close = dart::bin::CloseFile;
     params.entropy_source = dart::bin::GetEntropy;
-    char* init_error = Dart_Initialize(&params);
-    if (init_error) {
-      FML_LOG(FATAL) << "Error while initializing the Dart VM: " << init_error;
-      ::free(init_error);
-    }
+    params.get_service_assets = GetVMServiceAssetsArchiveCallback;
+    DartVMInitializer::Initialize(&params,
+                                  settings_.enable_timeline_event_handler,
+                                  settings_.trace_systrace);
     // Send the earliest available timestamp in the application lifecycle to
     // timeline. The difference between this timestamp and the time we render
     // the very first frame gives us a good idea about Flutter's startup time.
     // Use a duration event so about:tracing will consider this event when
     // deciding the earliest event to use as time 0.
-    if (engine_main_enter_ts != 0) {
-      Dart_TimelineEvent("FlutterEngineMainEnter",  // label
-                         engine_main_enter_ts,      // timestamp0
-                         engine_main_enter_ts,      // timestamp1_or_async_id
-                         Dart_Timeline_Event_Duration,  // event type
-                         0,                             // argument_count
-                         nullptr,                       // argument_names
-                         nullptr                        // argument_values
+    if (settings_.engine_start_timestamp.count()) {
+      Dart_TimelineEvent(
+          "FlutterEngineMainEnter",                  // label
+          settings_.engine_start_timestamp.count(),  // timestamp0
+          Dart_TimelineGetMicros(),                  // timestamp1_or_async_id
+          Dart_Timeline_Event_Duration,              // event type
+          0,                                         // argument_count
+          nullptr,                                   // argument_names
+          nullptr                                    // argument_values
       );
     }
   }
@@ -441,8 +498,9 @@ DartVM::DartVM(std::shared_ptr<const DartVMData> vm_data,
                                      dart_library_sources->GetSize());
   }
 
-  FML_DLOG(INFO) << "New Dart VM instance created. Instance count: "
-                 << gVMLaunchCount;
+  // Update thread names now that the Dart VM is initialized.
+  concurrent_message_loop_->PostTaskToAllWorkers(
+      [] { Dart_SetThreadName("FlutterConcurrentMessageLoopWorker"); });
 }
 
 DartVM::~DartVM() {
@@ -454,17 +512,9 @@ DartVM::~DartVM() {
     Dart_ExitIsolate();
   }
 
-  char* result = Dart_Cleanup();
+  DartVMInitializer::Cleanup();
 
   dart::bin::CleanupDartIo();
-
-  FML_CHECK(result == nullptr)
-      << "Could not cleanly shut down the Dart VM. Error: \"" << result
-      << "\".";
-  free(result);
-
-  FML_DLOG(INFO) << "Dart VM instance destroyed. Instance count: "
-                 << gVMLaunchCount;
 }
 
 std::shared_ptr<const DartVMData> DartVM::GetVMData() const {
@@ -486,6 +536,10 @@ std::shared_ptr<IsolateNameServer> DartVM::GetIsolateNameServer() const {
 std::shared_ptr<fml::ConcurrentTaskRunner>
 DartVM::GetConcurrentWorkerTaskRunner() const {
   return concurrent_message_loop_->GetTaskRunner();
+}
+
+std::shared_ptr<fml::ConcurrentMessageLoop> DartVM::GetConcurrentMessageLoop() {
+  return concurrent_message_loop_;
 }
 
 }  // namespace flutter

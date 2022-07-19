@@ -16,16 +16,16 @@
 #include "flutter/shell/platform/embedder/tests/embedder_config_builder.h"
 #include "flutter/testing/testing.h"
 
+// CREATE_NATIVE_ENTRY is leaky by design
+// NOLINTBEGIN(clang-analyzer-core.StackAddressEscape)
+
 namespace flutter {
 namespace testing {
 
-using Embedder11yTest = testing::EmbedderTest;
+using EmbedderA11yTest = testing::EmbedderTest;
 
-// TODO: This test has been disabled as it is flaky (more reproducible in
-// profile more). Multiple calls to a11y changed handler in Dart code is
-// suspected. https://github.com/flutter/flutter/issues/35218
-TEST_F(Embedder11yTest, A11yTreeIsConsistent) {
-  auto& context = GetEmbedderContext();
+TEST_F(EmbedderA11yTest, A11yTreeIsConsistent) {
+  auto& context = GetEmbedderContext(EmbedderTestContextType::kOpenGLContext);
 
   fml::AutoResetWaitableEvent latch;
 
@@ -65,6 +65,7 @@ TEST_F(Embedder11yTest, A11yTreeIsConsistent) {
           })));
 
   EmbedderConfigBuilder builder(context);
+  builder.SetSoftwareRendererConfig();
   builder.SetDartEntrypoint("a11y_main");
 
   auto engine = builder.LaunchEngine();
@@ -136,6 +137,12 @@ TEST_F(Embedder11yTest, A11yTreeIsConsistent) {
           ASSERT_EQ(7.0, node->transform.pers0);
           ASSERT_EQ(8.0, node->transform.pers1);
           ASSERT_EQ(9.0, node->transform.pers2);
+
+          if (node->id == 128) {
+            ASSERT_EQ(0x3f3, node->platform_view_id);
+          } else {
+            ASSERT_EQ(0, node->platform_view_id);
+          }
         }
       });
 
@@ -183,6 +190,7 @@ TEST_F(Embedder11yTest, A11yTreeIsConsistent) {
   std::vector<uint8_t> bytes({2, 1});
   result = FlutterEngineDispatchSemanticsAction(
       engine.get(), 42, kFlutterSemanticsActionTap, &bytes[0], bytes.size());
+  ASSERT_EQ(result, FlutterEngineResult::kSuccess);
   latch.Wait();
 
   // Disable semantics. Wait for NotifySemanticsEnabled(false).
@@ -199,3 +207,5 @@ TEST_F(Embedder11yTest, A11yTreeIsConsistent) {
 
 }  // namespace testing
 }  // namespace flutter
+
+// NOLINTEND(clang-analyzer-core.StackAddressEscape)

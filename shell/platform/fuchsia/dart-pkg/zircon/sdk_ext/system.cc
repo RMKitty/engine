@@ -21,11 +21,6 @@
 #include "third_party/tonic/dart_binding_macros.h"
 #include "third_party/tonic/dart_class_library.h"
 
-#if !defined(FUCHSIA_SDK)
-#include <fuchsia/device/manager/cpp/fidl.h>
-#include "lib/fsl/io/fd.h"
-#endif  // !defined(FUCHSIA_SDK)
-
 using tonic::ToDart;
 
 namespace zircon {
@@ -37,6 +32,8 @@ constexpr char kGetSizeResult[] = "GetSizeResult";
 constexpr char kHandlePairResult[] = "HandlePairResult";
 constexpr char kHandleResult[] = "HandleResult";
 constexpr char kReadResult[] = "ReadResult";
+constexpr char kHandleInfo[] = "HandleInfo";
+constexpr char kReadEtcResult[] = "ReadEtcResult";
 constexpr char kWriteResult[] = "WriteResult";
 constexpr char kFromFileResult[] = "FromFileResult";
 constexpr char kMapResult[] = "MapResult";
@@ -49,7 +46,7 @@ class ByteDataScope {
 
   explicit ByteDataScope(size_t size) {
     dart_handle_ = Dart_NewTypedData(Dart_TypedData_kByteData, size);
-    FML_DCHECK(!tonic::LogIfError(dart_handle_));
+    FML_DCHECK(!tonic::CheckAndHandleError(dart_handle_));
     Acquire();
     FML_DCHECK(size == size_);
   }
@@ -68,7 +65,7 @@ class ByteDataScope {
   void Release() {
     FML_DCHECK(is_valid_);
     Dart_Handle result = Dart_TypedDataReleaseData(dart_handle_);
-    tonic::LogIfError(result);
+    tonic::CheckAndHandleError(result);
     is_valid_ = false;
     data_ = nullptr;
     size_ = 0;
@@ -84,8 +81,8 @@ class ByteDataScope {
     intptr_t size;
     Dart_Handle result =
         Dart_TypedDataAcquireData(dart_handle_, &type, &data_, &size);
-    is_valid_ =
-        !tonic::LogIfError(result) && type == Dart_TypedData_kByteData && data_;
+    is_valid_ = !tonic::CheckAndHandleError(result) &&
+                type == Dart_TypedData_kByteData && data_;
     if (is_valid_) {
       size_ = size;
     } else {
@@ -103,7 +100,8 @@ Dart_Handle MakeHandleList(const std::vector<zx_handle_t>& in_handles) {
   tonic::DartClassLibrary& class_library =
       tonic::DartState::Current()->class_library();
   Dart_Handle handle_type = class_library.GetClass("zircon", "Handle");
-  Dart_Handle list = Dart_NewListOfType(handle_type, in_handles.size());
+  Dart_Handle list = Dart_NewListOfTypeFilled(
+      handle_type, Handle::CreateInvalid(), in_handles.size());
   if (Dart_IsError(list))
     return list;
   for (size_t i = 0; i < in_handles.size(); i++) {
@@ -121,7 +119,7 @@ Dart_Handle ConstructDartObject(const char* class_name, Args&&... args) {
       tonic::DartState::Current()->class_library();
   Dart_Handle type =
       Dart_HandleFromPersistent(class_library.GetClass("zircon", class_name));
-  FML_DCHECK(!tonic::LogIfError(type));
+  FML_DCHECK(!tonic::CheckAndHandleError(type));
 
   const char* cstr;
   Dart_StringToCString(Dart_ToString(type), &cstr);
@@ -130,23 +128,46 @@ Dart_Handle ConstructDartObject(const char* class_name, Args&&... args) {
       {std::forward<Args>(args)...}};
   Dart_Handle object =
       Dart_New(type, Dart_EmptyString(), sizeof...(Args), args_array.data());
-  FML_DCHECK(!tonic::LogIfError(object));
+  FML_DCHECK(!tonic::CheckAndHandleError(object));
   return object;
+}
+
+Dart_Handle MakeHandleInfoList(
+    const std::vector<zx_handle_info_t>& in_handles) {
+  tonic::DartClassLibrary& class_library =
+      tonic::DartState::Current()->class_library();
+  Dart_Handle handle_info_type = class_library.GetClass("zircon", kHandleInfo);
+  Dart_Handle empty_handle_info = ConstructDartObject(
+      kHandleInfo, ToDart(Handle::CreateInvalid()), ToDart(-1), ToDart(-1));
+  Dart_Handle list = Dart_NewListOfTypeFilled(
+      handle_info_type, empty_handle_info, in_handles.size());
+  if (Dart_IsError(list))
+    return list;
+  for (size_t i = 0; i < in_handles.size(); i++) {
+    Dart_Handle handle = ToDart(Handle::Create(in_handles[i].handle));
+    Dart_Handle result = Dart_ListSetAt(
+        list, i,
+        ConstructDartObject(kHandleInfo, handle, ToDart(in_handles[i].type),
+                            ToDart(in_handles[i].rights)));
+    if (Dart_IsError(result))
+      return result;
+  }
+  return list;
 }
 
 fdio_ns_t* GetNamespace() {
   // Grab the fdio_ns_t* out of the isolate.
   Dart_Handle zircon_lib = Dart_LookupLibrary(ToDart("dart:zircon"));
-  FML_DCHECK(!tonic::LogIfError(zircon_lib));
+  FML_DCHECK(!tonic::CheckAndHandleError(zircon_lib));
   Dart_Handle namespace_type =
-      Dart_GetType(zircon_lib, ToDart("_Namespace"), 0, nullptr);
-  FML_DCHECK(!tonic::LogIfError(namespace_type));
+      Dart_GetNonNullableType(zircon_lib, ToDart("_Namespace"), 0, nullptr);
+  FML_DCHECK(!tonic::CheckAndHandleError(namespace_type));
   Dart_Handle namespace_field =
       Dart_GetField(namespace_type, ToDart("_namespace"));
-  FML_DCHECK(!tonic::LogIfError(namespace_field));
+  FML_DCHECK(!tonic::CheckAndHandleError(namespace_field));
   uint64_t fdio_ns_ptr;
   Dart_Handle result = Dart_IntegerToUint64(namespace_field, &fdio_ns_ptr);
-  FML_DCHECK(!tonic::LogIfError(result));
+  FML_DCHECK(!tonic::CheckAndHandleError(result));
 
   return reinterpret_cast<fdio_ns_t*>(fdio_ns_ptr);
 }
@@ -182,9 +203,8 @@ Dart_Handle System::ChannelCreate(uint32_t options) {
 
 zx_status_t System::ConnectToService(std::string path,
                                      fml::RefPtr<Handle> channel) {
-  return fdio_ns_connect(GetNamespace(), path.c_str(),
-                         ZX_FS_RIGHT_READABLE | ZX_FS_RIGHT_WRITABLE,
-                         channel->ReleaseHandle());
+  return fdio_ns_service_connect(GetNamespace(), path.c_str(),
+                                 channel->ReleaseHandle());
 }
 
 zx::channel System::CloneChannelFromFileDescriptor(int fd) {
@@ -244,6 +264,42 @@ zx_status_t System::ChannelWrite(fml::RefPtr<Handle> channel,
   return status;
 }
 
+zx_status_t System::ChannelWriteEtc(
+    fml::RefPtr<Handle> channel,
+    const tonic::DartByteData& data,
+    std::vector<HandleDisposition*> handle_dispositions) {
+  if (!channel || !channel->is_valid()) {
+    data.Release();
+    return ZX_ERR_BAD_HANDLE;
+  }
+
+  std::vector<zx_handle_disposition_t> zx_handle_dispositions;
+  for (HandleDisposition* handle : handle_dispositions) {
+    FML_DCHECK(handle->result() == ZX_OK);
+    zx_handle_dispositions.push_back({.operation = handle->operation(),
+                                      .handle = handle->handle()->handle(),
+                                      .type = handle->type(),
+                                      .rights = handle->rights(),
+                                      .result = ZX_OK});
+  }
+
+  zx_status_t status = zx_channel_write_etc(
+      channel->handle(), 0, data.data(), data.length_in_bytes(),
+      zx_handle_dispositions.data(), zx_handle_dispositions.size());
+
+  for (size_t i = 0; i < handle_dispositions.size(); ++i) {
+    handle_dispositions[i]->set_result(zx_handle_dispositions[i].result);
+
+    // Handles that are not copied (i.e. moved) are always consumed.
+    if (handle_dispositions[i]->operation() != ZX_HANDLE_OP_DUPLICATE) {
+      handle_dispositions[i]->handle()->ReleaseHandle();
+    }
+  }
+
+  data.Release();
+  return status;
+}
+
 Dart_Handle System::ChannelQueryAndRead(fml::RefPtr<Handle> channel) {
   if (!channel || !channel->is_valid()) {
     return ConstructDartObject(kReadResult, ToDart(ZX_ERR_BAD_HANDLE));
@@ -281,6 +337,47 @@ Dart_Handle System::ChannelQueryAndRead(fml::RefPtr<Handle> channel) {
                                ToDart(actual_bytes), MakeHandleList(handles));
   } else {
     return ConstructDartObject(kReadResult, ToDart(status));
+  }
+}
+
+Dart_Handle System::ChannelQueryAndReadEtc(fml::RefPtr<Handle> channel) {
+  if (!channel || !channel->is_valid()) {
+    return ConstructDartObject(kReadEtcResult, ToDart(ZX_ERR_BAD_HANDLE));
+  }
+
+  uint32_t actual_bytes = 0;
+  uint32_t actual_handles = 0;
+
+  // Query the size of the next message.
+  zx_status_t status = zx_channel_read(channel->handle(), 0, nullptr, nullptr,
+                                       0, 0, &actual_bytes, &actual_handles);
+  if (status != ZX_ERR_BUFFER_TOO_SMALL) {
+    // An empty message or an error.
+    return ConstructDartObject(kReadEtcResult, ToDart(status));
+  }
+
+  // Allocate space for the bytes and handles.
+  ByteDataScope bytes(actual_bytes);
+  FML_DCHECK(bytes.is_valid());
+  std::vector<zx_handle_info_t> handles(actual_handles);
+
+  // Make the call to actually get the message.
+  status = zx_channel_read_etc(channel->handle(), 0, bytes.data(),
+                               handles.data(), bytes.size(), handles.size(),
+                               &actual_bytes, &actual_handles);
+  FML_DCHECK(status != ZX_OK || bytes.size() == actual_bytes);
+
+  bytes.Release();
+
+  if (status == ZX_OK) {
+    FML_DCHECK(handles.size() == actual_handles);
+
+    // return a ReadResult object.
+    return ConstructDartObject(kReadEtcResult, ToDart(status),
+                               bytes.dart_handle(), ToDart(actual_bytes),
+                               MakeHandleInfoList(handles));
+  } else {
+    return ConstructDartObject(kReadEtcResult, ToDart(status));
   }
 }
 
@@ -428,9 +525,7 @@ struct SizedRegion {
   size_t size;
 };
 
-void System::VmoMapFinalizer(void* isolate_callback_data,
-                             Dart_WeakPersistentHandle handle,
-                             void* peer) {
+void System::VmoMapFinalizer(void* isolate_callback_data, void* peer) {
   SizedRegion* r = reinterpret_cast<SizedRegion*>(peer);
   zx_vmar_unmap(zx_vmar_root_self(), reinterpret_cast<uintptr_t>(r->region),
                 r->size);
@@ -455,42 +550,42 @@ Dart_Handle System::VmoMap(fml::RefPtr<Handle> vmo) {
   void* data = reinterpret_cast<void*>(mapped_addr);
   Dart_Handle object = Dart_NewExternalTypedData(Dart_TypedData_kUint8, data,
                                                  static_cast<intptr_t>(size));
-  FML_DCHECK(!tonic::LogIfError(object));
+  FML_DCHECK(!tonic::CheckAndHandleError(object));
 
   SizedRegion* r = new SizedRegion(data, size);
-  Dart_NewWeakPersistentHandle(object, reinterpret_cast<void*>(r),
-                               static_cast<intptr_t>(size) + sizeof(*r),
-                               System::VmoMapFinalizer);
+  Dart_NewFinalizableHandle(object, reinterpret_cast<void*>(r),
+                            static_cast<intptr_t>(size) + sizeof(*r),
+                            System::VmoMapFinalizer);
 
   return ConstructDartObject(kMapResult, ToDart(ZX_OK), object);
 }
 
-uint64_t System::ClockGet(uint32_t clock_id) {
-  zx_time_t result = 0;
-  zx_clock_get(clock_id, &result);
-  return result;
+uint64_t System::ClockGetMonotonic() {
+  return zx_clock_get_monotonic();
 }
 
 // clang-format: off
 
-#define FOR_EACH_STATIC_BINDING(V) \
-  V(System, ChannelCreate)         \
-  V(System, ChannelFromFile)       \
-  V(System, ChannelWrite)          \
-  V(System, ChannelQueryAndRead)   \
-  V(System, EventpairCreate)       \
-  V(System, ConnectToService)      \
-  V(System, SocketCreate)          \
-  V(System, SocketWrite)           \
-  V(System, SocketRead)            \
-  V(System, VmoCreate)             \
-  V(System, VmoFromFile)           \
-  V(System, VmoGetSize)            \
-  V(System, VmoSetSize)            \
-  V(System, VmoRead)               \
-  V(System, VmoWrite)              \
-  V(System, VmoMap)                \
-  V(System, ClockGet)
+#define FOR_EACH_STATIC_BINDING(V)  \
+  V(System, ChannelCreate)          \
+  V(System, ChannelFromFile)        \
+  V(System, ChannelWrite)           \
+  V(System, ChannelWriteEtc)        \
+  V(System, ChannelQueryAndRead)    \
+  V(System, ChannelQueryAndReadEtc) \
+  V(System, EventpairCreate)        \
+  V(System, ConnectToService)       \
+  V(System, SocketCreate)           \
+  V(System, SocketWrite)            \
+  V(System, SocketRead)             \
+  V(System, VmoCreate)              \
+  V(System, VmoFromFile)            \
+  V(System, VmoGetSize)             \
+  V(System, VmoSetSize)             \
+  V(System, VmoRead)                \
+  V(System, VmoWrite)               \
+  V(System, VmoMap)                 \
+  V(System, ClockGetMonotonic)
 
 // clang-format: on
 

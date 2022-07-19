@@ -7,6 +7,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <windows.h>
 
 #include "flutter_export.h"
 #include "flutter_messenger.h"
@@ -17,149 +18,220 @@ extern "C" {
 #endif
 
 // Opaque reference to a Flutter window controller.
-typedef struct FlutterDesktopWindowControllerState*
-    FlutterDesktopWindowControllerRef;
+typedef struct FlutterDesktopViewControllerState*
+    FlutterDesktopViewControllerRef;
 
 // Opaque reference to a Flutter window.
-typedef struct FlutterDesktopWindow* FlutterDesktopWindowRef;
+struct FlutterDesktopView;
+typedef struct FlutterDesktopView* FlutterDesktopViewRef;
 
 // Opaque reference to a Flutter engine instance.
-typedef struct FlutterDesktopEngineState* FlutterDesktopEngineRef;
+struct FlutterDesktopEngine;
+typedef struct FlutterDesktopEngine* FlutterDesktopEngineRef;
 
-// TODO: remove once the embedder project has swiched to native windows
-FLUTTER_EXPORT bool FlutterDesktopInit();
+// Properties for configuring a Flutter engine instance.
+typedef struct {
+  // The path to the flutter_assets folder for the application to be run.
+  // This can either be an absolute path or a path relative to the directory
+  // containing the executable.
+  const wchar_t* assets_path;
 
-// TODO: remove once the embedder project has swiched to native windows
-FLUTTER_EXPORT void FlutterDesktopTerminate();
+  // The path to the icudtl.dat file for the version of Flutter you are using.
+  // This can either be an absolute path or a path relative to the directory
+  // containing the executable.
+  const wchar_t* icu_data_path;
 
-// Creates a Window running a Flutter Application.
+  // The path to the AOT library file for your application, if any.
+  // This can either be an absolute path or a path relative to the directory
+  // containing the executable. This can be nullptr for a non-AOT build, as
+  // it will be ignored in that case.
+  const wchar_t* aot_library_path;
+
+  // Number of elements in the array passed in as dart_entrypoint_argv.
+  int dart_entrypoint_argc;
+
+  // Array of Dart entrypoint arguments. This is deep copied during the call
+  // to FlutterDesktopEngineCreate.
+  const char** dart_entrypoint_argv;
+
+} FlutterDesktopEngineProperties;
+
+// ========== View Controller ==========
+
+// Creates a view that hosts and displays the given engine instance.
 //
-// FlutterDesktopInit() must be called prior to this function.
+// This takes ownership of |engine|, so FlutterDesktopEngineDestroy should no
+// longer be called on it, as it will be called internally when the view
+// controller is destroyed. If creating the view controller fails, the engine
+// will be destroyed immediately.
 //
-// The |assets_path| is the path to the flutter_assets folder for the Flutter
-// application to be run. |icu_data_path| is the path to the icudtl.dat file
-// for the version of Flutter you are using.
+// If |engine| is not already running, the view controller will start running
+// it automatically before displaying the window.
 //
-// The |arguments| are passed to the Flutter engine. See:
-// https://github.com/flutter/engine/blob/master/shell/common/switches.h for
-// for details. Not all arguments will apply to desktop.
+// The caller owns the returned reference, and is responsible for calling
+// FlutterDesktopViewControllerDestroy. Returns a null pointer in the event of
+// an error.
 //
-// Returns a null pointer in the event of an error. Otherwise, the pointer is
-// valid until FlutterDesktopRunWindowLoop has been called and returned.
-// Note that calling FlutterDesktopCreateWindow without later calling
-// FlutterDesktopRunWindowLoop on the returned reference is a memory leak.
-FLUTTER_EXPORT FlutterDesktopWindowControllerRef
-FlutterDesktopCreateWindow(int initial_width,
-                           int initial_height,
-                           const char* title,
-                           const char* assets_path,
-                           const char* icu_data_path,
-                           const char** arguments,
-                           size_t argument_count);
+// The Win32 implementation accepts width, height with view hookup explicitly
+// performed using the caller using HWND parenting.
+FLUTTER_EXPORT FlutterDesktopViewControllerRef
+FlutterDesktopViewControllerCreate(int width,
+                                   int height,
+                                   FlutterDesktopEngineRef engine);
 
 // Shuts down the engine instance associated with |controller|, and cleans up
 // associated state.
 //
 // |controller| is no longer valid after this call.
-FLUTTER_EXPORT void FlutterDesktopDestroyWindow(
-    FlutterDesktopWindowControllerRef controller);
+FLUTTER_EXPORT void FlutterDesktopViewControllerDestroy(
+    FlutterDesktopViewControllerRef controller);
 
-// Loops on Flutter window events until the window is closed.
-//
-// Once this function returns, |controller| is no longer valid, and must not be
-// be used again, as it calls FlutterDesktopDestroyWindow internally.
-//
-// TODO: Replace this with a method that allows running the runloop
-// incrementally.
-FLUTTER_EXPORT void FlutterDesktopRunWindowLoop(
-    FlutterDesktopWindowControllerRef controller);
-
-// Returns the window handle for the window associated with
-// FlutterDesktopWindowControllerRef.
+// Returns the handle for the engine running in FlutterDesktopViewControllerRef.
 //
 // Its lifetime is the same as the |controller|'s.
-FLUTTER_EXPORT FlutterDesktopWindowRef
-FlutterDesktopGetWindow(FlutterDesktopWindowControllerRef controller);
+FLUTTER_EXPORT FlutterDesktopEngineRef FlutterDesktopViewControllerGetEngine(
+    FlutterDesktopViewControllerRef controller);
+// Returns the view managed by the given controller.
+
+FLUTTER_EXPORT FlutterDesktopViewRef
+FlutterDesktopViewControllerGetView(FlutterDesktopViewControllerRef controller);
+
+// Requests new frame from engine and repaints the view
+FLUTTER_EXPORT void FlutterDesktopViewControllerForceRedraw(
+    FlutterDesktopViewControllerRef controller);
+
+// Allows the Flutter engine and any interested plugins an opportunity to
+// handle the given message.
+//
+// If the WindowProc was handled and further handling should stop, this returns
+// true and |result| will be populated. |result| is not set if returning false.
+FLUTTER_EXPORT bool FlutterDesktopViewControllerHandleTopLevelWindowProc(
+    FlutterDesktopViewControllerRef controller,
+    HWND hwnd,
+    UINT message,
+    WPARAM wparam,
+    LPARAM lparam,
+    LRESULT* result);
+
+// ========== Engine ==========
+
+// Creates a Flutter engine with the given properties.
+//
+// The caller owns the returned reference, and is responsible for calling
+// FlutterDesktopEngineDestroy. The lifetime of |engine_properties| is required
+// to extend only until the end of this call.
+FLUTTER_EXPORT FlutterDesktopEngineRef FlutterDesktopEngineCreate(
+    const FlutterDesktopEngineProperties* engine_properties);
+
+// Shuts down and destroys the given engine instance. Returns true if the
+// shutdown was successful, or if the engine was not running.
+//
+// |engine| is no longer valid after this call.
+FLUTTER_EXPORT bool FlutterDesktopEngineDestroy(FlutterDesktopEngineRef engine);
+
+// Starts running the given engine instance and optional entry point in the Dart
+// project. If the entry point is null, defaults to main().
+//
+// If provided, entry_point must be the name of a top-level function from the
+// same Dart library that contains the app's main() function, and must be
+// decorated with `@pragma(vm:entry-point)` to ensure the method is not
+// tree-shaken by the Dart compiler.
+//
+// Returns false if running the engine failed.
+FLUTTER_EXPORT bool FlutterDesktopEngineRun(FlutterDesktopEngineRef engine,
+                                            const char* entry_point);
+
+// DEPRECATED: This is no longer necessary to call, Flutter will take care of
+// processing engine messages transparently through DispatchMessage.
+//
+// Processes any pending events in the Flutter engine, and returns the
+// number of nanoseconds until the next scheduled event (or max, if none).
+//
+// This should be called on every run of the application-level runloop, and
+// a wait for native events in the runloop should never be longer than the
+// last return value from this function.
+FLUTTER_EXPORT uint64_t
+FlutterDesktopEngineProcessMessages(FlutterDesktopEngineRef engine);
+
+FLUTTER_EXPORT void FlutterDesktopEngineReloadSystemFonts(
+    FlutterDesktopEngineRef engine);
 
 // Returns the plugin registrar handle for the plugin with the given name.
 //
 // The name must be unique across the application.
 FLUTTER_EXPORT FlutterDesktopPluginRegistrarRef
-FlutterDesktopGetPluginRegistrar(FlutterDesktopWindowControllerRef controller,
-                                 const char* plugin_name);
+FlutterDesktopEngineGetPluginRegistrar(FlutterDesktopEngineRef engine,
+                                       const char* plugin_name);
 
-// Enables or disables hover tracking.
+// Returns the messenger associated with the engine.
+FLUTTER_EXPORT FlutterDesktopMessengerRef
+FlutterDesktopEngineGetMessenger(FlutterDesktopEngineRef engine);
+
+// Returns the texture registrar associated with the engine.
+FLUTTER_EXPORT FlutterDesktopTextureRegistrarRef
+FlutterDesktopEngineGetTextureRegistrar(
+    FlutterDesktopTextureRegistrarRef texture_registrar);
+
+// ========== View ==========
+
+// Return backing HWND for manipulation in host application.
+FLUTTER_EXPORT HWND FlutterDesktopViewGetHWND(FlutterDesktopViewRef view);
+
+// ========== Plugin Registrar (extensions) ==========
+// These are Windows-specific extensions to flutter_plugin_registrar.h
+
+// Function pointer type for top level WindowProc delegate registration.
 //
-// If hover is enabled, mouse movement will send hover events to the Flutter
-// engine, rather than only tracking the mouse while the button is pressed.
-// Defaults to on.
-FLUTTER_EXPORT void FlutterDesktopWindowSetHoverEnabled(
-    FlutterDesktopWindowRef flutter_window,
-    bool enabled);
-
-// Sets the displayed title for |flutter_window|.
-FLUTTER_EXPORT void FlutterDesktopWindowSetTitle(
-    FlutterDesktopWindowRef flutter_window,
-    const char* title);
-
-// Sets the displayed icon for |flutter_window|.
+// The user data will be whatever was passed to
+// FlutterDesktopRegisterTopLevelWindowProcHandler.
 //
-// The pixel format is 32-bit RGBA. The provided image data only needs to be
-// valid for the duration of the call to this method. Pass a nullptr to revert
-// to the default icon.
-FLUTTER_EXPORT void FlutterDesktopWindowSetIcon(
-    FlutterDesktopWindowRef flutter_window,
-    uint8_t* pixel_data,
-    int width,
-    int height);
+// Implementations should populate |result| and return true if the WindowProc
+// was handled and further handling should stop. |result| is ignored if the
+// function returns false.
+typedef bool (*FlutterDesktopWindowProcCallback)(HWND /* hwnd */,
+                                                 UINT /* uMsg */,
+                                                 WPARAM /*wParam*/,
+                                                 LPARAM /* lParam*/,
+                                                 void* /* user data */,
+                                                 LRESULT* result);
 
-// Gets the position and size of |flutter_window| in screen coordinates.
-FLUTTER_EXPORT void FlutterDesktopWindowGetFrame(
-    FlutterDesktopWindowRef flutter_window,
-    int* x,
-    int* y,
-    int* width,
-    int* height);
+// Returns the view associated with this registrar's engine instance.
+FLUTTER_EXPORT FlutterDesktopViewRef FlutterDesktopPluginRegistrarGetView(
+    FlutterDesktopPluginRegistrarRef registrar);
 
-// Sets the position and size of |flutter_window| in screen coordinates.
-FLUTTER_EXPORT void FlutterDesktopWindowSetFrame(
-    FlutterDesktopWindowRef flutter_window,
-    int x,
-    int y,
-    int width,
-    int height);
+FLUTTER_EXPORT void
+FlutterDesktopPluginRegistrarRegisterTopLevelWindowProcDelegate(
+    FlutterDesktopPluginRegistrarRef registrar,
+    FlutterDesktopWindowProcCallback delegate,
+    void* user_data);
 
-// Returns the scale factor--the number of pixels per screen coordinate--for
-// |flutter_window|.
-FLUTTER_EXPORT double FlutterDesktopWindowGetScaleFactor(
-    FlutterDesktopWindowRef flutter_window);
+FLUTTER_EXPORT void
+FlutterDesktopPluginRegistrarUnregisterTopLevelWindowProcDelegate(
+    FlutterDesktopPluginRegistrarRef registrar,
+    FlutterDesktopWindowProcCallback delegate);
 
-// Runs an instance of a headless Flutter engine.
+// ========== Freestanding Utilities ==========
+
+// Gets the DPI for a given |hwnd|, depending on the supported APIs per
+// windows version and DPI awareness mode. If nullptr is passed, returns the DPI
+// of the primary monitor.
 //
-// The |assets_path| is the path to the flutter_assets folder for the Flutter
-// application to be run. |icu_data_path| is the path to the icudtl.dat file
-// for the version of Flutter you are using.
-//
-// The |arguments| are passed to the Flutter engine. See:
-// https://github.com/flutter/engine/blob/master/shell/common/switches.h for
-// for details. Not all arguments will apply to desktop.
-//
-// Returns a null pointer in the event of an error.
-FLUTTER_EXPORT FlutterDesktopEngineRef
-FlutterDesktopRunEngine(const char* assets_path,
-                        const char* icu_data_path,
-                        const char** arguments,
-                        size_t argument_count);
+// This uses the same logic and fallback for older Windows versions that is used
+// internally by Flutter to determine the DPI to use for displaying Flutter
+// content, so should be used by any code (e.g., in plugins) that translates
+// between Windows and Dart sizes/offsets.
+FLUTTER_EXPORT UINT FlutterDesktopGetDpiForHWND(HWND hwnd);
 
-// Shuts down the given engine instance. Returns true if the shutdown was
-// successful. |engine_ref| is no longer valid after this call.
-FLUTTER_EXPORT bool FlutterDesktopShutDownEngine(
-    FlutterDesktopEngineRef engine_ref);
+// Gets the DPI for a given |monitor|. If the API is not available, a default
+// DPI of 96 is returned.
+//
+// See FlutterDesktopGetDpiForHWND for more information.
+FLUTTER_EXPORT UINT FlutterDesktopGetDpiForMonitor(HMONITOR monitor);
 
-// TODO: remove once embedder project has switched to native windows
-// imlpementation
-FLUTTER_EXPORT FlutterDesktopWindowRef
-FlutterDesktopRegistrarGetWindow(FlutterDesktopPluginRegistrarRef registrar);
+// Reopens stdout and stderr and resysncs the standard library output streams.
+// Should be called if output is being directed somewhere in the runner process
+// (e.g., after an AllocConsole call).
+FLUTTER_EXPORT void FlutterDesktopResyncOutputStreams();
 
 #if defined(__cplusplus)
 }  // extern "C"

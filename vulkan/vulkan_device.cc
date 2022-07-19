@@ -2,16 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "flutter/vulkan/vulkan_device.h"
+#include "vulkan_device.h"
 
 #include <limits>
 #include <map>
 #include <vector>
 
-#include "flutter/vulkan/vulkan_proc_table.h"
-#include "flutter/vulkan/vulkan_surface.h"
-#include "flutter/vulkan/vulkan_utilities.h"
 #include "third_party/skia/include/gpu/vk/GrVkBackendContext.h"
+#include "vulkan_proc_table.h"
+#include "vulkan_surface.h"
+#include "vulkan_utilities.h"
 
 namespace vulkan {
 
@@ -30,7 +30,8 @@ static uint32_t FindGraphicsQueueIndex(
 }
 
 VulkanDevice::VulkanDevice(VulkanProcTable& p_vk,
-                           VulkanHandle<VkPhysicalDevice> physical_device)
+                           VulkanHandle<VkPhysicalDevice> physical_device,
+                           bool enable_validation_layers)
     : vk(p_vk),
       physical_device_(std::move(physical_device)),
       graphics_queue_index_(std::numeric_limits<uint32_t>::max()),
@@ -58,18 +59,21 @@ VulkanDevice::VulkanDevice(VulkanProcTable& p_vk,
   };
 
   const char* extensions[] = {
-#if OS_ANDROID
+#if FML_OS_ANDROID
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 #endif
 #if OS_FUCHSIA
     VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
-    VK_FUCHSIA_EXTERNAL_MEMORY_EXTENSION_NAME,
     VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME,
+    VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME,
+    VK_FUCHSIA_EXTERNAL_MEMORY_EXTENSION_NAME,
     VK_FUCHSIA_EXTERNAL_SEMAPHORE_EXTENSION_NAME,
+    VK_FUCHSIA_BUFFER_COLLECTION_EXTENSION_NAME,
 #endif
   };
 
-  auto enabled_layers = DeviceLayersToEnable(vk, physical_device_);
+  auto enabled_layers =
+      DeviceLayersToEnable(vk, physical_device_, enable_validation_layers);
 
   const char* layers[enabled_layers.size()];
 
@@ -98,11 +102,11 @@ VulkanDevice::VulkanDevice(VulkanProcTable& p_vk,
     return;
   }
 
-  device_ = {device,
-             [this](VkDevice device) { vk.DestroyDevice(device, nullptr); }};
+  device_ = VulkanHandle<VkDevice>{
+      device, [this](VkDevice device) { vk.DestroyDevice(device, nullptr); }};
 
   if (!vk.SetupDeviceProcAddresses(device_)) {
-    FML_DLOG(INFO) << "Could not setup device proc addresses.";
+    FML_DLOG(INFO) << "Could not set up device proc addresses.";
     return;
   }
 
@@ -115,8 +119,38 @@ VulkanDevice::VulkanDevice(VulkanProcTable& p_vk,
     return;
   }
 
-  queue_ = queue;
+  queue_ = VulkanHandle<VkQueue>(queue);
 
+  if (!InitializeCommandPool()) {
+    return;
+  }
+
+  valid_ = true;
+}
+
+VulkanDevice::VulkanDevice(VulkanProcTable& p_vk,
+                           VulkanHandle<VkPhysicalDevice> physical_device,
+                           VulkanHandle<VkDevice> device,
+                           uint32_t queue_family_index,
+                           VulkanHandle<VkQueue> queue)
+    : vk(p_vk),
+      physical_device_(std::move(physical_device)),
+      device_(std::move(device)),
+      queue_(std::move(queue)),
+      graphics_queue_index_(queue_family_index),
+      valid_(false) {
+  if (!physical_device_ || !vk.AreInstanceProcsSetup()) {
+    return;
+  }
+
+  if (!InitializeCommandPool()) {
+    return;
+  }
+
+  valid_ = true;
+}
+
+bool VulkanDevice::InitializeCommandPool() {
   const VkCommandPoolCreateInfo command_pool_create_info = {
       .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
       .pNext = nullptr,
@@ -129,14 +163,15 @@ VulkanDevice::VulkanDevice(VulkanProcTable& p_vk,
                                              nullptr, &command_pool)) !=
       VK_SUCCESS) {
     FML_DLOG(INFO) << "Could not create the command pool.";
-    return;
+    return false;
   }
 
-  command_pool_ = {command_pool, [this](VkCommandPool pool) {
-                     vk.DestroyCommandPool(device_, pool, nullptr);
-                   }};
+  command_pool_ = VulkanHandle<VkCommandPool>{
+      command_pool, [this](VkCommandPool pool) {
+        vk.DestroyCommandPool(device_, pool, nullptr);
+      }};
 
-  valid_ = true;
+  return true;
 }
 
 VulkanDevice::~VulkanDevice() {
@@ -179,7 +214,7 @@ uint32_t VulkanDevice::GetGraphicsQueueIndex() const {
 bool VulkanDevice::GetSurfaceCapabilities(
     const VulkanSurface& surface,
     VkSurfaceCapabilitiesKHR* capabilities) const {
-#if OS_ANDROID
+#if FML_OS_ANDROID
   if (!surface.IsValid() || capabilities == nullptr) {
     return false;
   }
@@ -268,7 +303,7 @@ std::vector<VkQueueFamilyProperties> VulkanDevice::GetQueueFamilyProperties()
 int VulkanDevice::ChooseSurfaceFormat(const VulkanSurface& surface,
                                       std::vector<VkFormat> desired_formats,
                                       VkSurfaceFormatKHR* format) const {
-#if OS_ANDROID
+#if FML_OS_ANDROID
   if (!surface.IsValid() || format == nullptr) {
     return -1;
   }
@@ -284,9 +319,11 @@ int VulkanDevice::ChooseSurfaceFormat(const VulkanSurface& surface,
     return -1;
   }
 
-  VkSurfaceFormatKHR formats[format_count];
+  std::vector<VkSurfaceFormatKHR> formats;
+  formats.resize(format_count);
+
   if (VK_CALL_LOG_ERROR(vk.GetPhysicalDeviceSurfaceFormatsKHR(
-          physical_device_, surface.Handle(), &format_count, formats)) !=
+          physical_device_, surface.Handle(), &format_count, formats.data())) !=
       VK_SUCCESS) {
     return -1;
   }
@@ -318,8 +355,8 @@ bool VulkanDevice::ChoosePresentMode(const VulkanSurface& surface,
   // VK_PRESENT_MODE_FIFO_KHR is preferable on mobile platforms. The problems
   // mentioned in the ticket w.r.t the application being faster that the refresh
   // rate of the screen should not be faced by any Flutter platforms as they are
-  // powered by Vsync pulses instead of depending the the submit to block.
-  // However, for platforms that don't have VSync providers setup, it is better
+  // powered by Vsync pulses instead of depending the submit to block.
+  // However, for platforms that don't have VSync providers set up, it is better
   // to fall back to FIFO. For platforms that do have VSync providers, there
   // should be little difference. In case there is a need for a mode other than
   // FIFO, availability checks must be performed here before returning the

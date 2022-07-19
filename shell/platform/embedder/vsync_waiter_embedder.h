@@ -14,12 +14,13 @@ class VsyncWaiterEmbedder final : public VsyncWaiter {
  public:
   using VsyncCallback = std::function<void(intptr_t)>;
 
-  VsyncWaiterEmbedder(VsyncCallback callback,
+  VsyncWaiterEmbedder(const VsyncCallback& callback,
                       flutter::TaskRunners task_runners);
 
   ~VsyncWaiterEmbedder() override;
 
-  static bool OnEmbedderVsync(intptr_t baton,
+  static bool OnEmbedderVsync(const flutter::TaskRunners& task_runners,
+                              intptr_t baton,
                               fml::TimePoint frame_start_time,
                               fml::TimePoint frame_target_time);
 

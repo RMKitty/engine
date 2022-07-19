@@ -11,7 +11,6 @@
 #include <lib/fdio/directory.h>
 #include <lib/fdio/fd.h>
 #include <lib/fdio/namespace.h>
-#include <lib/fidl/cpp/optional.h>
 #include <lib/fidl/cpp/string.h>
 #include <lib/sys/cpp/service_directory.h>
 #include <lib/syslog/global.h>
@@ -21,9 +20,11 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <zircon/status.h>
+
 #include <regex>
 #include <utility>
 
+#include "runtime/dart/utils/files.h"
 #include "runtime/dart/utils/handle_exception.h"
 #include "runtime/dart/utils/inlines.h"
 #include "runtime/dart/utils/tempfs.h"
@@ -33,6 +34,7 @@
 #include "third_party/tonic/dart_microtask_queue.h"
 #include "third_party/tonic/dart_state.h"
 #include "third_party/tonic/logging/dart_error.h"
+#include "third_party/tonic/logging/dart_invoke.h"
 
 #include "builtin_libraries.h"
 #include "logging.h"
@@ -56,6 +58,11 @@ void AfterTask(async_loop_t*, void*) {
 }
 
 constexpr async_loop_config_t kLoopConfig = {
+    .default_accessors =
+        {
+            .getter = async_get_default_dispatcher,
+            .setter = async_set_default_dispatcher,
+        },
     .make_default_for_current_thread = true,
     .epilogue = &AfterTask,
 };
@@ -157,7 +164,7 @@ bool DartComponentController::SetupNamespace() {
     return false;
   }
 
-  dart_utils::SetupComponentTemp(namespace_);
+  dart_utils::RunnerTemp::SetupComponent(namespace_);
 
   for (size_t i = 0; i < flat->paths.size(); ++i) {
     if (flat->paths.at(i) == kTmpPath) {
@@ -188,26 +195,25 @@ bool DartComponentController::SetupNamespace() {
 }
 
 bool DartComponentController::SetupFromKernel() {
-  MappedResource manifest;
-  if (!MappedResource::LoadFromNamespace(
+  dart_utils::MappedResource manifest;
+  if (!dart_utils::MappedResource::LoadFromNamespace(
           namespace_, data_path_ + "/app.dilplist", manifest)) {
     return false;
   }
 
-  if (!MappedResource::LoadFromNamespace(
-          nullptr, "pkg/data/isolate_core_snapshot_data.bin",
+  if (!dart_utils::MappedResource::LoadFromNamespace(
+          nullptr, "/pkg/data/isolate_core_snapshot_data.bin",
           isolate_snapshot_data_)) {
     return false;
   }
-  if (!MappedResource::LoadFromNamespace(
-          nullptr, "pkg/data/isolate_core_snapshot_instructions.bin",
+  if (!dart_utils::MappedResource::LoadFromNamespace(
+          nullptr, "/pkg/data/isolate_core_snapshot_instructions.bin",
           isolate_snapshot_instructions_, true /* executable */)) {
     return false;
   }
 
   if (!CreateIsolate(isolate_snapshot_data_.address(),
-                     isolate_snapshot_instructions_.address(), nullptr,
-                     nullptr)) {
+                     isolate_snapshot_instructions_.address())) {
     return false;
   }
 
@@ -227,8 +233,9 @@ bool DartComponentController::SetupFromKernel() {
     std::string path = data_path_ + "/" + str.substr(start, end - start);
     start = end + 1;
 
-    MappedResource kernel;
-    if (!MappedResource::LoadFromNamespace(namespace_, path, kernel)) {
+    dart_utils::MappedResource kernel;
+    if (!dart_utils::MappedResource::LoadFromNamespace(namespace_, path,
+                                                       kernel)) {
       FX_LOGF(ERROR, LOG_TAG, "Failed to find kernel: %s", path.c_str());
       Dart_ExitScope();
       return false;
@@ -258,39 +265,30 @@ bool DartComponentController::SetupFromKernel() {
 
 bool DartComponentController::SetupFromAppSnapshot() {
 #if !defined(AOT_RUNTIME)
-  // If we start generating app-jit snapshots, the code below should be able
-  // handle that case without modification.
   return false;
 #else
-
-  if (!MappedResource::LoadFromNamespace(
-          namespace_, data_path_ + "/isolate_snapshot_data.bin",
-          isolate_snapshot_data_)) {
-    return false;
+  // Load the ELF snapshot as available, and fall back to a blobs snapshot
+  // otherwise.
+  const uint8_t *isolate_data, *isolate_instructions;
+  if (elf_snapshot_.Load(namespace_, data_path_ + "/app_aot_snapshot.so")) {
+    isolate_data = elf_snapshot_.IsolateData();
+    isolate_instructions = elf_snapshot_.IsolateInstrs();
+    if (isolate_data == nullptr || isolate_instructions == nullptr) {
+      return false;
+    }
+  } else {
+    if (!dart_utils::MappedResource::LoadFromNamespace(
+            namespace_, data_path_ + "/isolate_snapshot_data.bin",
+            isolate_snapshot_data_)) {
+      return false;
+    }
+    if (!dart_utils::MappedResource::LoadFromNamespace(
+            namespace_, data_path_ + "/isolate_snapshot_instructions.bin",
+            isolate_snapshot_instructions_, true /* executable */)) {
+      return false;
+    }
   }
-
-  if (!MappedResource::LoadFromNamespace(
-          namespace_, data_path_ + "/isolate_snapshot_instructions.bin",
-          isolate_snapshot_instructions_, true /* executable */)) {
-    return false;
-  }
-
-  if (!MappedResource::LoadFromNamespace(
-          namespace_, data_path_ + "/shared_snapshot_data.bin",
-          shared_snapshot_data_)) {
-    return false;
-  }
-
-  if (!MappedResource::LoadFromNamespace(
-          namespace_, data_path_ + "/shared_snapshot_instructions.bin",
-          shared_snapshot_instructions_, true /* executable */)) {
-    return false;
-  }
-
-  return CreateIsolate(isolate_snapshot_data_.address(),
-                       isolate_snapshot_instructions_.address(),
-                       shared_snapshot_data_.address(),
-                       shared_snapshot_instructions_.address());
+  return CreateIsolate(isolate_data, isolate_instructions);
 #endif  // defined(AOT_RUNTIME)
 }
 
@@ -312,9 +310,7 @@ int DartComponentController::SetupFileDescriptor(
 
 bool DartComponentController::CreateIsolate(
     const uint8_t* isolate_snapshot_data,
-    const uint8_t* isolate_snapshot_instructions,
-    const uint8_t* shared_snapshot_data,
-    const uint8_t* shared_snapshot_instructions) {
+    const uint8_t* isolate_snapshot_instructions) {
   // Create the isolate from the snapshot.
   char* error = nullptr;
 
@@ -326,9 +322,7 @@ bool DartComponentController::CreateIsolate(
 
   isolate_ = Dart_CreateIsolateGroup(
       url_.c_str(), label_.c_str(), isolate_snapshot_data,
-      isolate_snapshot_instructions, shared_snapshot_data,
-      shared_snapshot_instructions, nullptr /* flags */,
-      state /* isolate_group_data */, state /* isolate_data */, &error);
+      isolate_snapshot_instructions, nullptr /* flags */, state, state, &error);
   if (!isolate_) {
     FX_LOGF(ERROR, LOG_TAG, "Dart_CreateIsolateGroup failed: %s", error);
     return false;
@@ -364,7 +358,7 @@ bool DartComponentController::Main() {
   tonic::DartMicrotaskQueue::StartForCurrentThread();
 
   std::vector<std::string> arguments =
-      std::move(startup_info_.launch_info.arguments);
+      startup_info_.launch_info.arguments.value_or(std::vector<std::string>());
 
   stdoutfd_ = SetupFileDescriptor(std::move(startup_info_.launch_info.out));
   stderrfd_ = SetupFileDescriptor(std::move(startup_info_.launch_info.err));
@@ -407,8 +401,13 @@ bool DartComponentController::Main() {
   Dart_EnterIsolate(isolate_);
   Dart_EnterScope();
 
-  Dart_Handle dart_arguments =
-      Dart_NewListOf(Dart_CoreType_String, arguments.size());
+  Dart_Handle corelib = Dart_LookupLibrary(ToDart("dart:core"));
+  Dart_Handle string_type =
+      Dart_GetNonNullableType(corelib, ToDart("String"), 0, NULL);
+
+  Dart_Handle dart_arguments = Dart_NewListOfTypeFilled(
+      string_type, Dart_EmptyString(), arguments.size());
+
   if (Dart_IsError(dart_arguments)) {
     FX_LOGF(ERROR, LOG_TAG, "Failed to allocate Dart arguments list: %s",
             Dart_GetError(dart_arguments));
@@ -416,16 +415,32 @@ bool DartComponentController::Main() {
     return false;
   }
   for (size_t i = 0; i < arguments.size(); i++) {
-    tonic::LogIfError(
+    tonic::CheckAndHandleError(
         Dart_ListSetAt(dart_arguments, i, ToDart(arguments.at(i))));
   }
 
-  Dart_Handle argv[] = {
-      dart_arguments,
-  };
+  Dart_Handle user_main = Dart_GetField(Dart_RootLibrary(), ToDart("main"));
 
-  Dart_Handle main_result = Dart_Invoke(Dart_RootLibrary(), ToDart("main"),
-                                        dart_utils::ArraySize(argv), argv);
+  if (Dart_IsError(user_main)) {
+    FX_LOGF(ERROR, LOG_TAG,
+            "Failed to locate user_main in the root library: %s",
+            Dart_GetError(user_main));
+    Dart_ExitScope();
+    return false;
+  }
+
+  Dart_Handle fuchsia_lib = Dart_LookupLibrary(tonic::ToDart("dart:fuchsia"));
+
+  if (Dart_IsError(fuchsia_lib)) {
+    FX_LOGF(ERROR, LOG_TAG, "Failed to locate dart:fuchsia: %s",
+            Dart_GetError(fuchsia_lib));
+    Dart_ExitScope();
+    return false;
+  }
+
+  Dart_Handle main_result = tonic::DartInvokeField(
+      fuchsia_lib, "_runUserMainForDartRunner", {user_main, dart_arguments});
+
   if (Dart_IsError(main_result)) {
     auto dart_state = tonic::DartState::Current();
     if (!dart_state->has_set_return_code()) {
@@ -446,7 +461,11 @@ bool DartComponentController::Main() {
 
 void DartComponentController::Kill() {
   if (Dart_CurrentIsolate()) {
-    tonic::DartMicrotaskQueue::GetForCurrentThread()->Destroy();
+    tonic::DartMicrotaskQueue* queue =
+        tonic::DartMicrotaskQueue::GetForCurrentThread();
+    if (queue) {
+      queue->Destroy();
+    }
 
     loop_->Quit();
 

@@ -4,6 +4,8 @@
 
 #include "flutter/flow/layers/transform_layer.h"
 
+#include <optional>
+
 namespace flutter {
 
 TransformLayer::TransformLayer(const SkMatrix& transform)
@@ -24,9 +26,23 @@ TransformLayer::TransformLayer(const SkMatrix& transform)
   }
 }
 
-TransformLayer::~TransformLayer() = default;
+void TransformLayer::Diff(DiffContext* context, const Layer* old_layer) {
+  DiffContext::AutoSubtreeRestore subtree(context);
+  auto* prev = static_cast<const TransformLayer*>(old_layer);
+  if (!context->IsSubtreeDirty()) {
+    FML_DCHECK(prev);
+    if (transform_ != prev->transform_) {
+      context->MarkSubtreeDirty(context->GetOldLayerPaintRegion(old_layer));
+    }
+  }
+  context->PushTransform(transform_);
+  DiffChildren(context, prev);
+  context->SetLayerPaintRegion(this, context->CurrentSubtreeRegion());
+}
 
 void TransformLayer::Preroll(PrerollContext* context, const SkMatrix& matrix) {
+  TRACE_EVENT0("flutter", "TransformLayer::Preroll");
+
   SkMatrix child_matrix;
   child_matrix.setConcat(matrix, transform_);
   context->mutators_stack.PushTransform(transform_);
@@ -40,6 +56,10 @@ void TransformLayer::Preroll(PrerollContext* context, const SkMatrix& matrix) {
     context->cull_rect = kGiantRect;
   }
 
+  // Collect inheritance information on our children in Preroll so that
+  // we can pass it along by default.
+  context->subtree_can_inherit_opacity = true;
+
   SkRect child_paint_bounds = SkRect::MakeEmpty();
   PrerollChildren(context, child_matrix, &child_paint_bounds);
 
@@ -50,20 +70,9 @@ void TransformLayer::Preroll(PrerollContext* context, const SkMatrix& matrix) {
   context->mutators_stack.Pop();
 }
 
-#if defined(OS_FUCHSIA)
-
-void TransformLayer::UpdateScene(SceneUpdateContext& context) {
-  FML_DCHECK(needs_system_composite());
-
-  SceneUpdateContext::Transform transform(context, transform_);
-  UpdateSceneChildren(context);
-}
-
-#endif  // defined(OS_FUCHSIA)
-
 void TransformLayer::Paint(PaintContext& context) const {
   TRACE_EVENT0("flutter", "TransformLayer::Paint");
-  FML_DCHECK(needs_painting());
+  FML_DCHECK(needs_painting(context));
 
   SkAutoCanvasRestore save(context.internal_nodes_canvas, true);
   context.internal_nodes_canvas->concat(transform_);

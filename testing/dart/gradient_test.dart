@@ -4,14 +4,14 @@
 
 import 'dart:ui';
 
-import 'package:test/test.dart';
+import 'package:litetest/litetest.dart';
 
 void main() {
   test('Gradient.radial with no focal point', () {
     expect(
       Gradient.radial(
           Offset.zero,
-          null,
+          0.0,
           <Color>[const Color(0xFFFFFFFF), const Color(0xFFFFFFFF)],
           <double>[0.0, 1.0],
           TileMode.mirror),
@@ -66,7 +66,7 @@ void main() {
                 Offset.zero,
                 1.0,
               ),
-          throwsA(const TypeMatcher<AssertionError>()),
+          expectAssertion,
         );
         return true;
       }());

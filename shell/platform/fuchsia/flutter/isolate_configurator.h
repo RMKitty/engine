@@ -18,10 +18,10 @@ namespace flutter_runner {
 // the root isolate.
 class IsolateConfigurator final {
  public:
-  IsolateConfigurator(
-      UniqueFDIONS fdio_ns,
-      fidl::InterfaceHandle<fuchsia::sys::Environment> environment,
-      zx::channel directory_request);
+  IsolateConfigurator(UniqueFDIONS fdio_ns,
+                      fuchsia::sys::EnvironmentHandle environment,
+                      zx::channel directory_request,
+                      zx::eventpair view_ref);
 
   ~IsolateConfigurator();
 
@@ -32,8 +32,9 @@ class IsolateConfigurator final {
  private:
   bool used_ = false;
   UniqueFDIONS fdio_ns_;
-  fidl::InterfaceHandle<fuchsia::sys::Environment> environment_;
+  fuchsia::sys::EnvironmentHandle environment_;
   zx::channel directory_request_;
+  zx::eventpair view_ref_;
 
   void BindFuchsia();
 

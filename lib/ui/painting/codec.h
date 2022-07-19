@@ -6,16 +6,10 @@
 #define FLUTTER_LIB_UI_PAINTING_CODEC_H_
 
 #include "flutter/lib/ui/dart_wrapper.h"
-#include "flutter/lib/ui/painting/frame_info.h"
+#include "flutter/lib/ui/ui_dart_state.h"
 #include "third_party/skia/include/codec/SkCodec.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkImage.h"
-
-using tonic::DartPersistentValue;
-
-namespace tonic {
-class DartLibraryNatives;
-}  // namespace tonic
 
 namespace flutter {
 
@@ -33,8 +27,6 @@ class Codec : public RefCountedDartWrappable<Codec> {
   virtual Dart_Handle getNextFrame(Dart_Handle callback_handle) = 0;
 
   void dispose();
-
-  static void RegisterNatives(tonic::DartLibraryNatives* natives);
 };
 
 }  // namespace flutter

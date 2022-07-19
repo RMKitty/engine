@@ -20,7 +20,8 @@ namespace flutter {
 
 class AssetManagerFontStyleSet : public SkFontStyleSet {
  public:
-  AssetManagerFontStyleSet(std::shared_ptr<AssetManager> asset_manager);
+  AssetManagerFontStyleSet(std::shared_ptr<AssetManager> asset_manager,
+                           std::string family_name);
 
   ~AssetManagerFontStyleSet() override;
 
@@ -40,9 +41,10 @@ class AssetManagerFontStyleSet : public SkFontStyleSet {
 
  private:
   std::shared_ptr<AssetManager> asset_manager_;
+  std::string family_name_;
 
   struct TypefaceAsset {
-    TypefaceAsset(std::string a);
+    explicit TypefaceAsset(std::string a);
 
     TypefaceAsset(const TypefaceAsset& other);
 
@@ -58,7 +60,8 @@ class AssetManagerFontStyleSet : public SkFontStyleSet {
 
 class AssetManagerFontProvider : public txt::FontAssetProvider {
  public:
-  AssetManagerFontProvider(std::shared_ptr<AssetManager> asset_manager);
+  explicit AssetManagerFontProvider(
+      std::shared_ptr<AssetManager> asset_manager);
 
   ~AssetManagerFontProvider() override;
 

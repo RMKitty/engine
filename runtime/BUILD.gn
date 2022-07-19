@@ -2,19 +2,16 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//third_party/dart/runtime/bin/vmservice/vmservice_sources.gni")
-import("$flutter_root/common/config.gni")
-import("$flutter_root/testing/testing.gni")
+import("//flutter/common/config.gni")
+import("//flutter/testing/testing.gni")
 
 source_set("test_font") {
   sources = [
     "test_font_data.cc",
     "test_font_data.h",
   ]
-  deps = [
-    "//third_party/skia",
-  ]
-  public_configs = [ "$flutter_root:config" ]
+  deps = [ "//third_party/skia" ]
+  public_configs = [ "//flutter:config" ]
   defines = []
   if (flutter_runtime_mode == "debug" || current_toolchain == host_toolchain) {
     # Though the test font data is small, we dont want to add to the binary size
@@ -28,38 +25,55 @@ source_set("test_font") {
 group("libdart") {
   public_deps = []
 
-  if (!(is_fuchsia && using_fuchsia_sdk)) {
-    if (flutter_runtime_mode == "profile" ||
-        flutter_runtime_mode == "release") {
-      public_deps +=
-          [ "//third_party/dart/runtime:libdart_precompiled_runtime" ]
-    } else {
-      public_deps += [
-        "$flutter_root/lib/snapshot",
-        "//third_party/dart/runtime:libdart_jit",
-      ]
-    }
+  if (flutter_runtime_mode == "profile" || flutter_runtime_mode == "release") {
+    public_deps += [ "//third_party/dart/runtime:libdart_precompiled_runtime" ]
+  } else {
+    public_deps += [
+      "//flutter/lib/snapshot",
+      "//third_party/dart/runtime:libdart_jit",
+    ]
   }
+}
+
+source_set("dart_plugin_registrant") {
+  sources = [
+    "dart_plugin_registrant.cc",
+    "dart_plugin_registrant.h",
+  ]
+  deps = [
+    "//flutter/fml",
+    "//flutter/third_party/tonic",
+    "//third_party/dart/runtime:dart_api",
+  ]
 }
 
 source_set("runtime") {
   sources = [
     "dart_isolate.cc",
     "dart_isolate.h",
+    "dart_isolate_group_data.cc",
+    "dart_isolate_group_data.h",
     "dart_service_isolate.cc",
     "dart_service_isolate.h",
     "dart_snapshot.cc",
     "dart_snapshot.h",
+    "dart_timestamp_provider.cc",
+    "dart_timestamp_provider.h",
     "dart_vm.cc",
     "dart_vm.h",
     "dart_vm_data.cc",
     "dart_vm_data.h",
+    "dart_vm_initializer.cc",
+    "dart_vm_initializer.h",
     "dart_vm_lifecycle.cc",
     "dart_vm_lifecycle.h",
     "embedder_resources.cc",
     "embedder_resources.h",
-    "ptrace_ios.cc",
-    "ptrace_ios.h",
+    "isolate_configuration.cc",
+    "isolate_configuration.h",
+    "platform_data.cc",
+    "platform_data.h",
+    "ptrace_check.h",
     "runtime_controller.cc",
     "runtime_controller.h",
     "runtime_delegate.cc",
@@ -68,30 +82,34 @@ source_set("runtime") {
     "service_protocol.h",
     "skia_concurrent_executor.cc",
     "skia_concurrent_executor.h",
-    "start_up.cc",
-    "start_up.h",
   ]
 
-  deps = [
-    ":test_font",
-    "$flutter_root/assets",
-    "$flutter_root/common",
-    "$flutter_root/flow",
-    "$flutter_root/fml",
-    "$flutter_root/lib/io",
-    "$flutter_root/lib/ui",
-    "$flutter_root/third_party/txt",
-    "//third_party/dart/runtime:dart_api",
-    "//third_party/dart/runtime/bin:dart_io_api",
-    "//third_party/skia",
-    "//third_party/tonic",
-  ]
+  if (is_ios && flutter_runtime_mode == "debug") {
+    # These contain references to private APIs and this TU must only be compiled in debug runtime modes.
+    sources += [ "ptrace_check.cc" ]
+  }
 
   public_deps = [
+    "//flutter/lib/ui",
     "//third_party/rapidjson",
   ]
 
-  public_configs = [ "$flutter_root:config" ]
+  public_configs = [ "//flutter:config" ]
+
+  deps = [
+    ":dart_plugin_registrant",
+    ":test_font",
+    "//flutter/assets",
+    "//flutter/common",
+    "//flutter/flow",
+    "//flutter/fml",
+    "//flutter/lib/io",
+    "//flutter/third_party/tonic",
+    "//flutter/third_party/txt",
+    "//third_party/dart/runtime:dart_api",
+    "//third_party/dart/runtime/bin:dart_io_api",
+    "//third_party/skia",
+  ]
 
   if (flutter_runtime_mode != "release" && !is_fuchsia) {
     # Only link in Observatory in non-release modes on non-Fuchsia. Fuchsia
@@ -102,47 +120,80 @@ source_set("runtime") {
   }
 }
 
-test_fixtures("runtime_fixtures") {
-  dart_main = "fixtures/runtime_test.dart"
-}
+if (enable_unittests) {
+  test_fixtures("runtime_fixtures") {
+    dart_main = "fixtures/runtime_test.dart"
+  }
 
-source_set("runtime_unittests_common") {
-  visibility = [ ":*" ]
+  executable("runtime_unittests") {
+    testonly = true
 
-  testonly = true
+    sources = [
+      "dart_isolate_unittests.cc",
+      "dart_lifecycle_unittests.cc",
+      "dart_service_isolate_unittests.cc",
+      "dart_vm_unittests.cc",
+      "type_conversions_unittests.cc",
+    ]
 
-  sources = [
-    "runtime_test.cc",
-    "runtime_test.h",
-  ]
+    public_configs = [ "//flutter:export_dynamic_symbols" ]
 
-  public_deps = [
-    ":libdart",
-    ":runtime",
-    ":runtime_fixtures",
-    "$flutter_root/common",
-    "$flutter_root/fml",
-    "$flutter_root/lib/snapshot",
-    "$flutter_root/shell/common",
-    "$flutter_root/testing:dart",
-    "//third_party/skia",
-    "//third_party/tonic",
-  ]
-}
+    public_deps = [
+      ":libdart",
+      ":runtime",
+      ":runtime_fixtures",
+      "//flutter/common",
+      "//flutter/fml",
+      "//flutter/lib/snapshot",
+      "//flutter/testing",
+      "//flutter/testing:dart",
+      "//flutter/testing:fixture_test",
+      "//flutter/third_party/tonic",
+      "//third_party/dart/runtime/bin:elf_loader",
+      "//third_party/skia",
+    ]
+  }
 
-executable("runtime_unittests") {
-  testonly = true
+  test_fixtures("no_plugin_registrant") {
+    dart_main = "fixtures/no_dart_plugin_registrant_test.dart"
+    use_target_as_artifact_prefix = true
+  }
 
-  configs += [ "$flutter_root:export_dynamic_symbols" ]
+  executable("no_dart_plugin_registrant_unittests") {
+    testonly = true
 
-  sources = [
-    "dart_isolate_unittests.cc",
-    "dart_lifecycle_unittests.cc",
-    "dart_service_isolate_unittests.cc",
-    "dart_vm_unittests.cc",
-  ]
+    sources = [ "no_dart_plugin_registrant_unittests.cc" ]
 
-  deps = [
-    ":runtime_unittests_common",
-  ]
+    public_configs = [ "//flutter:export_dynamic_symbols" ]
+
+    public_deps = [
+      ":no_plugin_registrant",
+      "//flutter/fml",
+      "//flutter/lib/snapshot",
+      "//flutter/testing",
+      "//flutter/testing:fixture_test",
+    ]
+  }
+
+  test_fixtures("plugin_registrant") {
+    dart_main = "fixtures/dart_tool/flutter_build/dart_plugin_registrant.dart"
+    use_target_as_artifact_prefix = true
+  }
+
+  executable("dart_plugin_registrant_unittests") {
+    testonly = true
+
+    sources = [ "dart_plugin_registrant_unittests.cc" ]
+
+    public_configs = [ "//flutter:export_dynamic_symbols" ]
+
+    public_deps = [
+      ":plugin_registrant",
+      "//flutter/fml",
+      "//flutter/lib/snapshot",
+      "//flutter/runtime:dart_plugin_registrant",
+      "//flutter/testing",
+      "//flutter/testing:fixture_test",
+    ]
+  }
 }

@@ -4,51 +4,111 @@
 
 package io.flutter.view;
 
-import android.support.annotation.NonNull;
+import android.annotation.TargetApi;
+import android.hardware.display.DisplayManager;
 import android.view.Choreographer;
-import android.view.WindowManager;
-
-import io.flutter.Log;
+import android.view.Display;
+import androidx.annotation.NonNull;
+import androidx.annotation.VisibleForTesting;
 import io.flutter.embedding.engine.FlutterJNI;
 
 // TODO(mattcarroll): add javadoc.
 public class VsyncWaiter {
-    private static VsyncWaiter instance;
-
-    @NonNull
-    public static VsyncWaiter getInstance(@NonNull WindowManager windowManager) {
-        if (instance == null) {
-            instance = new VsyncWaiter(windowManager);
-        }
-        return instance;
+  @TargetApi(17)
+  class DisplayListener implements DisplayManager.DisplayListener {
+    DisplayListener(DisplayManager displayManager) {
+      this.displayManager = displayManager;
     }
 
-    @NonNull
-    private final WindowManager windowManager;
+    private DisplayManager displayManager;
 
-    private final FlutterJNI.AsyncWaitForVsyncDelegate asyncWaitForVsyncDelegate = new FlutterJNI.AsyncWaitForVsyncDelegate() {
+    void register() {
+      displayManager.registerDisplayListener(this, null);
+    }
+
+    @Override
+    public void onDisplayAdded(int displayId) {}
+
+    @Override
+    public void onDisplayRemoved(int displayId) {}
+
+    @Override
+    public void onDisplayChanged(int displayId) {
+      if (displayId == Display.DEFAULT_DISPLAY) {
+        final Display primaryDisplay = displayManager.getDisplay(Display.DEFAULT_DISPLAY);
+        float fps = primaryDisplay.getRefreshRate();
+        VsyncWaiter.this.refreshPeriodNanos = (long) (1000000000.0 / fps);
+        VsyncWaiter.this.flutterJNI.setRefreshRateFPS(fps);
+      }
+    }
+  }
+
+  private static VsyncWaiter instance;
+  private static DisplayListener listener;
+  private long refreshPeriodNanos = -1;
+  private FlutterJNI flutterJNI;
+
+  @NonNull
+  public static VsyncWaiter getInstance(float fps, @NonNull FlutterJNI flutterJNI) {
+    if (instance == null) {
+      instance = new VsyncWaiter(flutterJNI);
+    }
+    flutterJNI.setRefreshRateFPS(fps);
+    instance.refreshPeriodNanos = (long) (1000000000.0 / fps);
+    return instance;
+  }
+
+  @TargetApi(17)
+  @NonNull
+  public static VsyncWaiter getInstance(
+      @NonNull DisplayManager displayManager, @NonNull FlutterJNI flutterJNI) {
+    if (instance == null) {
+      instance = new VsyncWaiter(flutterJNI);
+    }
+    if (listener == null) {
+      listener = instance.new DisplayListener(displayManager);
+      listener.register();
+    }
+    if (instance.refreshPeriodNanos == -1) {
+      final Display primaryDisplay = displayManager.getDisplay(Display.DEFAULT_DISPLAY);
+      float fps = primaryDisplay.getRefreshRate();
+      instance.refreshPeriodNanos = (long) (1000000000.0 / fps);
+      flutterJNI.setRefreshRateFPS(fps);
+    }
+    return instance;
+  }
+
+  // For tests, to reset the singleton between tests.
+  @VisibleForTesting
+  public static void reset() {
+    instance = null;
+    listener = null;
+  }
+
+  private final FlutterJNI.AsyncWaitForVsyncDelegate asyncWaitForVsyncDelegate =
+      new FlutterJNI.AsyncWaitForVsyncDelegate() {
         @Override
         public void asyncWaitForVsync(long cookie) {
-            Choreographer.getInstance().postFrameCallback(new Choreographer.FrameCallback() {
-                @Override
-                public void doFrame(long frameTimeNanos) {
-                    float fps = windowManager.getDefaultDisplay().getRefreshRate();
-                    long refreshPeriodNanos = (long) (1000000000.0 / fps);
-                    FlutterJNI.nativeOnVsync(frameTimeNanos, frameTimeNanos + refreshPeriodNanos, cookie);
-                }
-            });
+          Choreographer.getInstance()
+              .postFrameCallback(
+                  new Choreographer.FrameCallback() {
+                    @Override
+                    public void doFrame(long frameTimeNanos) {
+                      long delay = System.nanoTime() - frameTimeNanos;
+                      if (delay < 0) {
+                        delay = 0;
+                      }
+                      flutterJNI.onVsync(delay, refreshPeriodNanos, cookie);
+                    }
+                  });
         }
-    };
+      };
 
-    private VsyncWaiter(@NonNull WindowManager windowManager) {
-        this.windowManager = windowManager;
-    }
+  private VsyncWaiter(@NonNull FlutterJNI flutterJNI) {
+    this.flutterJNI = flutterJNI;
+  }
 
-    public void init() {
-        FlutterJNI.setAsyncWaitForVsyncDelegate(asyncWaitForVsyncDelegate);
-
-        // TODO(mattcarroll): look into moving FPS reporting to a plugin
-        float fps = windowManager.getDefaultDisplay().getRefreshRate();
-        FlutterJNI.setRefreshRateFPS(fps);
-    }
+  public void init() {
+    flutterJNI.setAsyncWaitForVsyncDelegate(asyncWaitForVsyncDelegate);
+  }
 }
