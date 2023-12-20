@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifndef FLUTTER_IMPELLER_ARCHIVIST_ARCHIVE_CLASS_REGISTRATION_H_
+#define FLUTTER_IMPELLER_ARCHIVIST_ARCHIVE_CLASS_REGISTRATION_H_
+
 #include <map>
 #include <optional>
 
@@ -41,7 +44,11 @@ class ArchiveClassRegistration {
   MemberColumnMap column_map_;
   bool is_valid_ = false;
 
-  FML_DISALLOW_COPY_AND_ASSIGN(ArchiveClassRegistration);
+  ArchiveClassRegistration(const ArchiveClassRegistration&) = delete;
+
+  ArchiveClassRegistration& operator=(const ArchiveClassRegistration&) = delete;
 };
 
 }  // namespace impeller
+
+#endif  // FLUTTER_IMPELLER_ARCHIVIST_ARCHIVE_CLASS_REGISTRATION_H_

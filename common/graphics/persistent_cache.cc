@@ -8,6 +8,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "flutter/fml/base32.h"
 #include "flutter/fml/file.h"
@@ -17,11 +18,11 @@
 #include "flutter/fml/mapping.h"
 #include "flutter/fml/paths.h"
 #include "flutter/fml/trace_event.h"
+#include "flutter/shell/common/base64.h"
 #include "flutter/shell/version/version.h"
 #include "openssl/sha.h"
 #include "rapidjson/document.h"
 #include "third_party/skia/include/gpu/GrDirectContext.h"
-#include "third_party/skia/include/utils/SkBase64.h"
 
 namespace flutter {
 
@@ -74,7 +75,7 @@ void PersistentCache::ResetCacheForProcess() {
 }
 
 void PersistentCache::SetCacheDirectoryPath(std::string path) {
-  cache_base_path_ = path;
+  cache_base_path_ = std::move(path);
 }
 
 bool PersistentCache::Purge() {
@@ -168,21 +169,21 @@ sk_sp<SkData> ParseBase32(const std::string& input) {
 }
 
 sk_sp<SkData> ParseBase64(const std::string& input) {
-  SkBase64::Error error;
+  Base64::Error error;
 
   size_t output_len;
-  error = SkBase64::Decode(input.c_str(), input.length(), nullptr, &output_len);
-  if (error != SkBase64::Error::kNoError) {
-    FML_LOG(ERROR) << "Base64 decode error: " << error;
+  error = Base64::Decode(input.c_str(), input.length(), nullptr, &output_len);
+  if (error != Base64::Error::kNone) {
+    FML_LOG(ERROR) << "Base64 decode error: " << (int)error;
     FML_LOG(ERROR) << "Base64 can't decode: " << input;
     return nullptr;
   }
 
   sk_sp<SkData> data = SkData::MakeUninitialized(output_len);
   void* output = data->writable_data();
-  error = SkBase64::Decode(input.c_str(), input.length(), output, &output_len);
-  if (error != SkBase64::Error::kNoError) {
-    FML_LOG(ERROR) << "Base64 decode error: " << error;
+  error = Base64::Decode(input.c_str(), input.length(), output, &output_len);
+  if (error != Base64::Error::kNone) {
+    FML_LOG(ERROR) << "Base64 decode error: " << (int)error;
     FML_LOG(ERROR) << "Base64 can't decode: " << input;
     return nullptr;
   }
@@ -343,10 +344,13 @@ sk_sp<SkData> PersistentCache::load(const SkData& key) {
   return result;
 }
 
-static void PersistentCacheStore(fml::RefPtr<fml::TaskRunner> worker,
-                                 std::shared_ptr<fml::UniqueFD> cache_directory,
-                                 std::string key,
-                                 std::unique_ptr<fml::Mapping> value) {
+static void PersistentCacheStore(
+    const fml::RefPtr<fml::TaskRunner>& worker,
+    const std::shared_ptr<fml::UniqueFD>& cache_directory,
+    std::string key,
+    std::unique_ptr<fml::Mapping> value) {
+  // The static leak checker gets confused by the use of fml::MakeCopyable.
+  // NOLINTNEXTLINE(clang-analyzer-cplusplus.NewDeleteLeaks)
   auto task = fml::MakeCopyable([cache_directory,             //
                                  file_name = std::move(key),  //
                                  mapping = std::move(value)   //
@@ -438,13 +442,13 @@ void PersistentCache::DumpSkp(const SkData& data) {
 }
 
 void PersistentCache::AddWorkerTaskRunner(
-    fml::RefPtr<fml::TaskRunner> task_runner) {
+    const fml::RefPtr<fml::TaskRunner>& task_runner) {
   std::scoped_lock lock(worker_task_runners_mutex_);
   worker_task_runners_.insert(task_runner);
 }
 
 void PersistentCache::RemoveWorkerTaskRunner(
-    fml::RefPtr<fml::TaskRunner> task_runner) {
+    const fml::RefPtr<fml::TaskRunner>& task_runner) {
   std::scoped_lock lock(worker_task_runners_mutex_);
   auto found = worker_task_runners_.find(task_runner);
   if (found != worker_task_runners_.end()) {
@@ -465,7 +469,7 @@ fml::RefPtr<fml::TaskRunner> PersistentCache::GetWorkerTaskRunner() const {
 
 void PersistentCache::SetAssetManager(std::shared_ptr<AssetManager> value) {
   TRACE_EVENT_INSTANT0("flutter", "PersistentCache::SetAssetManager");
-  asset_manager_ = value;
+  asset_manager_ = std::move(value);
 }
 
 std::vector<std::unique_ptr<fml::Mapping>>

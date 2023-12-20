@@ -83,6 +83,7 @@ def RunGN(variant_dir, flags):
 def BuildNinjaTargets(variant_dir, targets):
   assert os.path.exists(os.path.join(_out_dir, variant_dir))
 
+  print('Running autoninja for targets: %s' % targets)
   RunExecutable(['autoninja', '-C',
                  os.path.join(_out_dir, variant_dir)] + targets)
 
@@ -234,7 +235,7 @@ def CopyBuildToBucket(runtime_mode, arch, optimized, product):
   bucket_root = os.path.join(_bucket_directory, 'flutter')
   licenses_root = os.path.join(_src_root_dir, 'flutter/ci/licenses_golden')
   license_files = [
-      'licenses_flutter', 'licenses_fuchsia', 'licenses_gpu', 'licenses_skia',
+      'licenses_flutter', 'licenses_fuchsia', 'licenses_skia',
       'licenses_third_party'
   ]
   for license in license_files:
@@ -253,6 +254,8 @@ def CheckCIPDPackageExists(package_name, tag):
       tag,
   ]
   stdout = subprocess.check_output(command)
+  # TODO ricardoamador: remove this check when python 2 is deprecated.
+  stdout = stdout if isinstance(stdout, str) else stdout.decode('UTF-8')
   match = re.search(r'No matching instances\.', stdout)
   if match:
     return False
@@ -310,15 +313,8 @@ def ProcessCIPDPackage(upload, engine_version):
 
 
 def BuildTarget(
-    runtime_mode,
-    arch,
-    optimized,
-    enable_lto,
-    enable_legacy,
-    asan,
-    dart_version_git_info,
-    prebuilt_dart_sdk,
-    additional_targets=[]
+    runtime_mode, arch, optimized, enable_lto, enable_legacy, asan,
+    dart_version_git_info, prebuilt_dart_sdk, build_targets
 ):
   unopt = "_unopt" if not optimized else ""
   out_dir = 'fuchsia_%s%s_%s' % (runtime_mode, unopt, arch)
@@ -344,7 +340,7 @@ def BuildTarget(
     flags.append('--no-prebuilt-dart-sdk')
 
   RunGN(out_dir, flags)
-  BuildNinjaTargets(out_dir, ['flutter'] + additional_targets)
+  BuildNinjaTargets(out_dir, build_targets)
 
   return
 
@@ -450,9 +446,20 @@ def main():
       'and copy two debug builds, one with ASAN and one without.'
   )
 
+  # TODO(http://fxb/110639): Deprecate this in favor of multiple runtime parameters
+  parser.add_argument(
+      '--skip-remove-buckets',
+      action='store_true',
+      default=False,
+      help='This allows for multiple runtimes to exist in the default bucket directory. If '
+      'set, will skip over the removal of existing artifacts in the bucket directory '
+      '(which is the default behavior).'
+  )
+
   args = parser.parse_args()
-  RemoveDirectoryIfExists(_bucket_directory)
   build_mode = args.runtime_mode
+  if (not args.skip_remove_buckets):
+    RemoveDirectoryIfExists(_bucket_directory)
 
   archs = ['x64', 'arm64'] if args.archs == 'all' else [args.archs]
   runtime_modes = ['debug', 'profile', 'release']
@@ -473,7 +480,7 @@ def main():
               runtime_mode, arch, optimized, enable_lto, enable_legacy,
               args.asan, not args.no_dart_version_git_info,
               not args.no_prebuilt_dart_sdk,
-              args.targets.split(",") if args.targets else []
+              args.targets.split(",") if args.targets else ['flutter']
           )
         CopyBuildToBucket(runtime_mode, arch, optimized, product)
 
@@ -488,9 +495,17 @@ def main():
         if args.copy_unoptimized_debug_artifacts and runtime_mode == 'debug' and optimized:
           CopyBuildToBucket(runtime_mode, arch, not optimized, product)
 
+  # Set revision to HEAD if empty and remove upload. This is to support
+  # presubmit workflows.
+  should_upload = args.upload
+  engine_version = args.engine_version
+  if not engine_version:
+    engine_version = 'HEAD'
+    should_upload = False
+
   # Create and optionally upload CIPD package
   if args.cipd_dry_run or args.upload:
-    ProcessCIPDPackage(args.upload, args.engine_version)
+    ProcessCIPDPackage(should_upload, engine_version)
 
   return 0
 

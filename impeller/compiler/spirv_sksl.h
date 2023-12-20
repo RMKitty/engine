@@ -2,14 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef FLUTTER_IMPELLER_COMPILER_SPIRV_SKSL_H_
+#define FLUTTER_IMPELLER_COMPILER_SPIRV_SKSL_H_
 
+#include <cstdint>
 #include <memory>
 #include <utility>
 #include <variant>
 
 #include "flutter/fml/logging.h"
-#include "flutter/fml/macros.h"
 #include "spirv_glsl.hpp"
 
 namespace impeller {
@@ -38,12 +39,15 @@ class CompilerSkSL : public spirv_cross::CompilerGLSL {
 
   void emit_uniform(const spirv_cross::SPIRVariable& var) override;
 
+  void fixup_user_functions();
+
   void detect_unsupported_resources();
   bool emit_constant_resources();
   bool emit_struct_resources();
   bool emit_uniform_resources();
   bool emit_output_resources();
   bool emit_global_variable_resources();
+  bool emit_undefined_values();
   void emit_resources();
 
   void emit_interface_block(const spirv_cross::SPIRVariable& var);
@@ -75,3 +79,5 @@ class CompilerSkSL : public spirv_cross::CompilerGLSL {
 
 }  // namespace compiler
 }  // namespace impeller
+
+#endif  // FLUTTER_IMPELLER_COMPILER_SPIRV_SKSL_H_

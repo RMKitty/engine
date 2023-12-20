@@ -30,7 +30,8 @@ class ParagraphBuilder : public RefCountedDartWrappable<ParagraphBuilder> {
                      double fontSize,
                      double height,
                      const std::u16string& ellipsis,
-                     const std::string& locale);
+                     const std::string& locale,
+                     bool applyRoundingHack);
 
   ~ParagraphBuilder() override;
 
@@ -60,11 +61,11 @@ class ParagraphBuilder : public RefCountedDartWrappable<ParagraphBuilder> {
   // Internally, this method adds a single object replacement character (0xFFFC)
   // and emplaces a new PlaceholderRun instance to the vector of inline
   // placeholders.
-  Dart_Handle addPlaceholder(double width,
-                             double height,
-                             unsigned alignment,
-                             double baseline_offset,
-                             unsigned baseline);
+  void addPlaceholder(double width,
+                      double height,
+                      unsigned alignment,
+                      double baseline_offset,
+                      unsigned baseline);
 
   void build(Dart_Handle paragraph_handle);
 
@@ -76,9 +77,10 @@ class ParagraphBuilder : public RefCountedDartWrappable<ParagraphBuilder> {
                             double fontSize,
                             double height,
                             const std::u16string& ellipsis,
-                            const std::string& locale);
+                            const std::string& locale,
+                            bool applyRoundingHack);
 
-  std::unique_ptr<txt::ParagraphBuilder> m_paragraphBuilder;
+  std::unique_ptr<txt::ParagraphBuilder> m_paragraph_builder_;
 };
 
 }  // namespace flutter

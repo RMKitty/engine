@@ -11,6 +11,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
 import android.view.accessibility.AccessibilityEvent;
+import android.widget.FrameLayout;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import io.flutter.embedding.android.AndroidTouchProcessor;
@@ -230,35 +231,15 @@ public class FlutterMutatorViewTest {
     assertFalse(eventSent);
   }
 
-  @Test
-  @Config(
-      shadows = {
-        ShadowViewGroup.class,
-      })
-  public void sendAccessibilityEvents() {
-    final FlutterMutatorView wrapperView = new FlutterMutatorView(ctx);
-
-    final View embeddedView = mock(View.class);
-    wrapperView.addView(embeddedView);
-
-    when(embeddedView.getImportantForAccessibility())
-        .thenReturn(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
-    boolean eventSent =
-        wrapperView.requestSendAccessibilityEvent(embeddedView, mock(AccessibilityEvent.class));
-    assertTrue(eventSent);
-
-    when(embeddedView.getImportantForAccessibility())
-        .thenReturn(View.IMPORTANT_FOR_ACCESSIBILITY_AUTO);
-    eventSent =
-        wrapperView.requestSendAccessibilityEvent(embeddedView, mock(AccessibilityEvent.class));
-    assertTrue(eventSent);
-  }
-
   @Implements(ViewGroup.class)
-  public static class ShadowViewGroup extends org.robolectric.shadows.ShadowView {
+  public static class ShadowViewGroup extends org.robolectric.shadows.ShadowViewGroup {
     @Implementation
-    public boolean requestSendAccessibilityEvent(View child, AccessibilityEvent event) {
+    protected boolean requestSendAccessibilityEvent(View child, AccessibilityEvent event) {
       return true;
     }
   }
+
+  @Implements(FrameLayout.class)
+  public static class ShadowFrameLayout
+      extends io.flutter.plugin.platform.PlatformViewWrapperTest.ShadowViewGroup {}
 }

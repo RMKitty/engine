@@ -21,7 +21,12 @@
 #include "third_party/tonic/logging/dart_invoke.h"
 #include "third_party/tonic/typed_data/typed_list.h"
 #include "txt/asset_font_manager.h"
+#include "txt/platform.h"
 #include "txt/test_font_manager.h"
+
+#if FML_OS_MACOSX || FML_OS_IOS
+#include "txt/platform_mac.h"
+#endif
 
 namespace flutter {
 
@@ -45,8 +50,27 @@ void FontCollection::SetupDefaultFontManager(
   collection_->SetupDefaultFontManager(font_initialization_data);
 }
 
+// Font manifest yaml format:
+//
+// flutter:
+//   fonts:
+//    - family: Raleway
+//      fonts:
+//        - asset: fonts/Raleway-Regular.ttf
+//        - asset: fonts/Raleway-Italic.ttf
+//          style: italic
+//    - family: RobotoMono
+//      fonts:
+//        - asset: fonts/RobotoMono-Regular.ttf
+//        - asset: fonts/RobotoMono-Bold.ttf
+//          weight: 700
+//
+// Structure described in https://docs.flutter.dev/cookbook/design/fonts
 void FontCollection::RegisterFonts(
-    std::shared_ptr<AssetManager> asset_manager) {
+    const std::shared_ptr<AssetManager>& asset_manager) {
+#if FML_OS_MACOSX || FML_OS_IOS
+  RegisterSystemFonts(*dynamic_font_manager_);
+#endif
   std::unique_ptr<fml::Mapping> manifest_mapping =
       asset_manager->GetAsMapping("FontManifest.json");
   if (manifest_mapping == nullptr) {
@@ -64,8 +88,6 @@ void FontCollection::RegisterFonts(
     FML_DLOG(WARNING) << "Error parsing the font manifest in the asset store.";
     return;
   }
-
-  // Structure described in https://flutter.io/custom-fonts/
 
   if (!document.IsArray()) {
     return;
@@ -107,19 +129,16 @@ void FontCollection::RegisterFonts(
 }
 
 void FontCollection::RegisterTestFonts() {
-  std::vector<sk_sp<SkTypeface>> test_typefaces;
-  std::vector<std::unique_ptr<SkStreamAsset>> font_data = GetTestFontData();
-  for (auto& font : font_data) {
-    test_typefaces.push_back(SkTypeface::MakeFromStream(std::move(font)));
-  }
-
+  std::vector<sk_sp<SkTypeface>> test_typefaces = GetTestFontData();
   std::unique_ptr<txt::TypefaceFontAssetProvider> font_provider =
       std::make_unique<txt::TypefaceFontAssetProvider>();
 
   size_t index = 0;
   std::vector<std::string> names = GetTestFontFamilyNames();
   for (sk_sp<SkTypeface> typeface : test_typefaces) {
-    font_provider->RegisterTypeface(std::move(typeface), names[index]);
+    if (typeface) {
+      font_provider->RegisterTypeface(std::move(typeface), names[index]);
+    }
     index++;
   }
 
@@ -131,7 +150,7 @@ void FontCollection::RegisterTestFonts() {
 
 void FontCollection::LoadFontFromList(Dart_Handle font_data_handle,
                                       Dart_Handle callback,
-                                      std::string family_name) {
+                                      const std::string& family_name) {
   tonic::Uint8List font_data(font_data_handle);
   UIDartState::ThrowIfUIOperationsProhibited();
   FontCollection& font_collection = UIDartState::Current()
@@ -141,8 +160,8 @@ void FontCollection::LoadFontFromList(Dart_Handle font_data_handle,
 
   std::unique_ptr<SkStreamAsset> font_stream = std::make_unique<SkMemoryStream>(
       font_data.data(), font_data.num_elements(), true);
-  sk_sp<SkTypeface> typeface =
-      SkTypeface::MakeFromStream(std::move(font_stream));
+  sk_sp<SkFontMgr> font_mgr = txt::GetDefaultFontManager();
+  sk_sp<SkTypeface> typeface = font_mgr->makeFromStream(std::move(font_stream));
   txt::TypefaceFontAssetProvider& font_provider =
       font_collection.dynamic_font_manager_->font_provider();
   if (family_name.empty()) {

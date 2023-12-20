@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef FLUTTER_IMPELLER_RENDERER_BACKEND_METAL_RENDER_PASS_MTL_H_
+#define FLUTTER_IMPELLER_RENDERER_BACKEND_METAL_RENDER_PASS_MTL_H_
 
 #include <Metal/Metal.h>
 
@@ -25,7 +26,9 @@ class RenderPassMTL final : public RenderPass {
   std::string label_;
   bool is_valid_ = false;
 
-  RenderPassMTL(id<MTLCommandBuffer> buffer, RenderTarget target);
+  RenderPassMTL(std::weak_ptr<const Context> context,
+                const RenderTarget& target,
+                id<MTLCommandBuffer> buffer);
 
   // |RenderPass|
   bool IsValid() const override;
@@ -34,13 +37,16 @@ class RenderPassMTL final : public RenderPass {
   void OnSetLabel(std::string label) override;
 
   // |RenderPass|
-  bool EncodeCommands(
-      const std::shared_ptr<Allocator>& transients_allocator) const override;
+  bool OnEncodeCommands(const Context& context) const override;
 
   bool EncodeCommands(const std::shared_ptr<Allocator>& transients_allocator,
                       id<MTLRenderCommandEncoder> pass) const;
 
-  FML_DISALLOW_COPY_AND_ASSIGN(RenderPassMTL);
+  RenderPassMTL(const RenderPassMTL&) = delete;
+
+  RenderPassMTL& operator=(const RenderPassMTL&) = delete;
 };
 
 }  // namespace impeller
+
+#endif  // FLUTTER_IMPELLER_RENDERER_BACKEND_METAL_RENDER_PASS_MTL_H_

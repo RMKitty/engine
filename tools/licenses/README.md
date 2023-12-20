@@ -27,10 +27,10 @@ To update the goldens, make sure you've rebased your branch to the
 latest upstream main and then run the following in this directory:
 
 ```
-pub get
+dart pub get
 gclient sync -D
 rm -rf ../../../out/licenses
-dart lib/main.dart --src ../../.. --out ../../../out/licenses --golden ../../ci/licenses_golden
+dart --enable-asserts lib/main.dart --src ../../.. --out ../../../out/licenses --golden ../../ci/licenses_golden
 ```
 
 In order for the license script to work correctly, you need to remove
@@ -58,12 +58,21 @@ time the golden file changes in a way that involves changes to
 anything other than the `FILE` lines. To update this file, run:
 
 ```
-pub get
-gclient sync
-dart lib/main.dart --release --src ../../.. --out ../../../out/licenses > ../../sky/packages/sky_engine/LICENSE
+dart pub get
+gclient sync -D
+dart --enable-asserts lib/main.dart --release --src ../../.. > ../../sky/packages/sky_engine/LICENSE
 ```
 
 The bots do not verify that you did this step, it's important that you
 do it! When reviewing patches, if you see a change to the golden
 files, check to see if there's a corresponding change to the LICENSE
 file!
+
+## Testing
+
+To run the tests:
+
+```
+dart pub get
+find -name "*_test.dart" | xargs -n 1 dart --enable-asserts
+```

@@ -5,12 +5,14 @@
 #include "impeller/renderer/backend/gles/texture_gles.h"
 
 #include <optional>
+#include <utility>
 
 #include "flutter/fml/mapping.h"
 #include "flutter/fml/trace_event.h"
 #include "impeller/base/allocation.h"
-#include "impeller/base/config.h"
 #include "impeller/base/validation.h"
+#include "impeller/core/formats.h"
+#include "impeller/core/texture_descriptor.h"
 #include "impeller/renderer/backend/gles/formats_gles.h"
 
 namespace impeller {
@@ -20,35 +22,40 @@ static TextureGLES::Type GetTextureTypeFromDescriptor(
   const auto usage = static_cast<TextureUsageMask>(desc.usage);
   const auto render_target =
       static_cast<TextureUsageMask>(TextureUsage::kRenderTarget);
-  if (usage == render_target) {
-    return TextureGLES::Type::kRenderBuffer;
+  const auto is_msaa = desc.sample_count == SampleCount::kCount4;
+  if (usage == render_target && desc.format == PixelFormat::kS8UInt) {
+    return is_msaa ? TextureGLES::Type::kRenderBufferMultisampled
+                   : TextureGLES::Type::kRenderBuffer;
   }
-  return TextureGLES::Type::kTexture;
+  return is_msaa ? TextureGLES::Type::kTextureMultisampled
+                 : TextureGLES::Type::kTexture;
 }
 
 HandleType ToHandleType(TextureGLES::Type type) {
   switch (type) {
     case TextureGLES::Type::kTexture:
+    case TextureGLES::Type::kTextureMultisampled:
       return HandleType::kTexture;
     case TextureGLES::Type::kRenderBuffer:
+    case TextureGLES::Type::kRenderBufferMultisampled:
       return HandleType::kRenderBuffer;
   }
   FML_UNREACHABLE();
 }
 
 TextureGLES::TextureGLES(ReactorGLES::Ref reactor, TextureDescriptor desc)
-    : TextureGLES(std::move(reactor), std::move(desc), false) {}
+    : TextureGLES(std::move(reactor), desc, false) {}
 
 TextureGLES::TextureGLES(ReactorGLES::Ref reactor,
                          TextureDescriptor desc,
                          enum IsWrapped wrapped)
-    : TextureGLES(std::move(reactor), std::move(desc), true) {}
+    : TextureGLES(std::move(reactor), desc, true) {}
 
 TextureGLES::TextureGLES(std::shared_ptr<ReactorGLES> reactor,
                          TextureDescriptor desc,
                          bool is_wrapped)
-    : Texture(std::move(desc)),
-      reactor_(reactor),
+    : Texture(desc),
+      reactor_(std::move(reactor)),
       type_(GetTextureTypeFromDescriptor(GetTextureDescriptor())),
       handle_(reactor_->CreateHandle(ToHandleType(type_))),
       is_wrapped_(is_wrapped) {
@@ -66,12 +73,13 @@ TextureGLES::TextureGLES(std::shared_ptr<ReactorGLES> reactor,
                    << " would exceed max supported size of " << max_size << ".";
     return;
   }
+
   is_valid_ = true;
 }
 
 // |Texture|
 TextureGLES::~TextureGLES() {
-  reactor_->CollectHandle(std::move(handle_));
+  reactor_->CollectHandle(handle_);
 }
 
 // |Texture|
@@ -105,42 +113,43 @@ struct TexImage2DData {
         external_format = GL_RGBA;
         type = GL_UNSIGNED_BYTE;
         break;
-      case PixelFormat::kUnknown:
+      case PixelFormat::kR32G32B32A32Float:
+        internal_format = GL_RGBA;
+        external_format = GL_RGBA;
+        type = GL_FLOAT;
+        break;
+      case PixelFormat::kR16G16B16A16Float:
+        internal_format = GL_RGBA;
+        external_format = GL_RGBA;
+        type = GL_HALF_FLOAT;
+        break;
       case PixelFormat::kS8UInt:
+        // Pure stencil textures are only available in OpenGL 4.4+, which is
+        // ~0% of mobile devices. Instead, we use a depth-stencil texture and
+        // only use the stencil component.
+        //
+        // https://registry.khronos.org/OpenGL-Refpages/gl4/html/glTexImage2D.xhtml
+        internal_format = GL_DEPTH_STENCIL;
+        external_format = GL_DEPTH_STENCIL;
+        type = GL_UNSIGNED_INT_24_8;
+        break;
+      case PixelFormat::kUnknown:
+      case PixelFormat::kD24UnormS8Uint:
+      case PixelFormat::kD32FloatS8UInt:
+      case PixelFormat::kR8UNormInt:
+      case PixelFormat::kR8G8UNormInt:
+      case PixelFormat::kB10G10R10XRSRGB:
+      case PixelFormat::kB10G10R10XR:
+      case PixelFormat::kB10G10R10A10XR:
         return;
     }
     is_valid_ = true;
   }
 
   TexImage2DData(PixelFormat pixel_format,
-                 std::shared_ptr<const fml::Mapping> mapping) {
-    switch (pixel_format) {
-      case PixelFormat::kUnknown:
-        return;
-      case PixelFormat::kA8UNormInt: {
-        internal_format = GL_ALPHA;
-        external_format = GL_ALPHA;
-        type = GL_UNSIGNED_BYTE;
-        data = std::move(mapping);
-        break;
-      }
-      case PixelFormat::kR8G8B8A8UNormInt: {
-        internal_format = GL_RGBA;
-        external_format = GL_RGBA;
-        type = GL_UNSIGNED_BYTE;
-        data = std::move(mapping);
-        break;
-      }
-      case PixelFormat::kR8G8B8A8UNormIntSRGB:
-        return;
-      case PixelFormat::kB8G8R8A8UNormInt:
-        return;
-      case PixelFormat::kB8G8R8A8UNormIntSRGB:
-        return;
-      case PixelFormat::kS8UInt:
-        return;
-    }
-    is_valid_ = true;
+                 std::shared_ptr<const fml::Mapping> mapping)
+      : TexImage2DData(pixel_format) {
+    data = std::move(mapping);
   }
 
   bool IsValid() const { return is_valid_; }
@@ -211,6 +220,10 @@ bool TextureGLES::OnSetContents(std::shared_ptr<const fml::Mapping> mapping,
       texture_type = GL_TEXTURE_CUBE_MAP;
       texture_target = GL_TEXTURE_CUBE_MAP_POSITIVE_X + slice;
       break;
+    case TextureType::kTextureExternalOES:
+      texture_type = GL_TEXTURE_EXTERNAL_OES;
+      texture_target = GL_TEXTURE_EXTERNAL_OES;
+      break;
   }
 
   auto data = std::make_shared<TexImage2DData>(tex_descriptor.format,
@@ -269,12 +282,25 @@ static std::optional<GLenum> ToRenderBufferFormat(PixelFormat format) {
     case PixelFormat::kB8G8R8A8UNormInt:
     case PixelFormat::kR8G8B8A8UNormInt:
       return GL_RGBA4;
+    case PixelFormat::kR32G32B32A32Float:
+      return GL_RGBA32F;
+    case PixelFormat::kR16G16B16A16Float:
+      return GL_RGBA16F;
     case PixelFormat::kS8UInt:
       return GL_STENCIL_INDEX8;
+    case PixelFormat::kD24UnormS8Uint:
+      return GL_DEPTH24_STENCIL8;
+    case PixelFormat::kD32FloatS8UInt:
+      return GL_DEPTH32F_STENCIL8;
     case PixelFormat::kUnknown:
     case PixelFormat::kA8UNormInt:
+    case PixelFormat::kR8UNormInt:
+    case PixelFormat::kR8G8UNormInt:
     case PixelFormat::kR8G8B8A8UNormIntSRGB:
     case PixelFormat::kB8G8R8A8UNormIntSRGB:
+    case PixelFormat::kB10G10R10XRSRGB:
+    case PixelFormat::kB10G10R10XR:
+    case PixelFormat::kB10G10R10A10XR:
       return std::nullopt;
   }
   FML_UNREACHABLE();
@@ -307,7 +333,8 @@ void TextureGLES::InitializeContentsIfNecessary() const {
   }
 
   switch (type_) {
-    case Type::kTexture: {
+    case Type::kTexture:
+    case Type::kTextureMultisampled: {
       TexImage2DData tex_data(GetTextureDescriptor().format);
       if (!tex_data.IsValid()) {
         VALIDATION_LOG << "Invalid format for texture image.";
@@ -327,9 +354,9 @@ void TextureGLES::InitializeContentsIfNecessary() const {
                       nullptr                    // data
         );
       }
-
     } break;
     case Type::kRenderBuffer:
+    case Type::kRenderBufferMultisampled: {
       auto render_buffer_format =
           ToRenderBufferFormat(GetTextureDescriptor().format);
       if (!render_buffer_format.has_value()) {
@@ -339,27 +366,43 @@ void TextureGLES::InitializeContentsIfNecessary() const {
       gl.BindRenderbuffer(GL_RENDERBUFFER, handle.value());
       {
         TRACE_EVENT0("impeller", "RenderBufferStorageInitialization");
-        gl.RenderbufferStorage(GL_RENDERBUFFER,               // target
-                               render_buffer_format.value(),  // internal format
-                               size.width,                    // width
-                               size.height                    // height
-        );
+        if (type_ == Type::kRenderBufferMultisampled) {
+          gl.RenderbufferStorageMultisampleEXT(
+              GL_RENDERBUFFER,               // target
+              4,                             // samples
+              render_buffer_format.value(),  // internal format
+              size.width,                    // width
+              size.height                    // height
+          );
+        } else {
+          gl.RenderbufferStorage(
+              GL_RENDERBUFFER,               // target
+              render_buffer_format.value(),  // internal format
+              size.width,                    // width
+              size.height                    // height
+          );
+        }
       }
-      break;
+    } break;
   }
 }
 
-bool TextureGLES::Bind() const {
+std::optional<GLuint> TextureGLES::GetGLHandle() const {
   if (!IsValid()) {
-    return false;
+    return std::nullopt;
   }
-  auto handle = reactor_->GetGLHandle(handle_);
+  return reactor_->GetGLHandle(handle_);
+}
+
+bool TextureGLES::Bind() const {
+  auto handle = GetGLHandle();
   if (!handle.has_value()) {
     return false;
   }
   const auto& gl = reactor_->GetProcTable();
   switch (type_) {
-    case Type::kTexture: {
+    case Type::kTexture:
+    case Type::kTextureMultisampled: {
       const auto target = ToTextureTarget(GetTextureDescriptor().type);
       if (!target.has_value()) {
         VALIDATION_LOG << "Could not bind texture of this type.";
@@ -368,10 +411,45 @@ bool TextureGLES::Bind() const {
       gl.BindTexture(target.value(), handle.value());
     } break;
     case Type::kRenderBuffer:
+    case Type::kRenderBufferMultisampled:
       gl.BindRenderbuffer(GL_RENDERBUFFER, handle.value());
       break;
   }
   InitializeContentsIfNecessary();
+  return true;
+}
+
+bool TextureGLES::GenerateMipmap() {
+  if (!IsValid()) {
+    return false;
+  }
+
+  auto type = GetTextureDescriptor().type;
+  switch (type) {
+    case TextureType::kTexture2D:
+      break;
+    case TextureType::kTexture2DMultisample:
+      VALIDATION_LOG << "Generating mipmaps for multisample textures is not "
+                        "supported in the GLES backend.";
+      return false;
+    case TextureType::kTextureCube:
+      break;
+    case TextureType::kTextureExternalOES:
+      break;
+  }
+
+  if (!Bind()) {
+    return false;
+  }
+
+  auto handle = GetGLHandle();
+  if (!handle.has_value()) {
+    return false;
+  }
+
+  const auto& gl = reactor_->GetProcTable();
+  gl.GenerateMipmap(ToTextureType(type));
+  mipmap_generated_ = true;
   return true;
 }
 
@@ -390,43 +468,56 @@ static GLenum ToAttachmentPoint(TextureGLES::AttachmentPoint point) {
   }
 }
 
-bool TextureGLES::SetAsFramebufferAttachment(GLuint fbo,
+bool TextureGLES::SetAsFramebufferAttachment(GLenum target,
                                              AttachmentPoint point) const {
   if (!IsValid()) {
     return false;
   }
   InitializeContentsIfNecessary();
-  auto handle = reactor_->GetGLHandle(handle_);
+  auto handle = GetGLHandle();
   if (!handle.has_value()) {
     return false;
   }
   const auto& gl = reactor_->GetProcTable();
+
   switch (type_) {
     case Type::kTexture:
-      gl.FramebufferTexture2D(GL_FRAMEBUFFER,            // target
+      gl.FramebufferTexture2D(target,                    // target
                               ToAttachmentPoint(point),  // attachment
                               GL_TEXTURE_2D,             // textarget
                               handle.value(),            // texture
                               0                          // level
       );
       break;
+    case Type::kTextureMultisampled:
+      gl.FramebufferTexture2DMultisampleEXT(
+          target,                    // target
+          ToAttachmentPoint(point),  // attachment
+          GL_TEXTURE_2D,             // textarget
+          handle.value(),            // texture
+          0,                         // level
+          4                          // samples
+      );
+      break;
     case Type::kRenderBuffer:
-      gl.FramebufferRenderbuffer(GL_FRAMEBUFFER,            // target
+    case Type::kRenderBufferMultisampled:
+      gl.FramebufferRenderbuffer(target,                    // target
                                  ToAttachmentPoint(point),  // attachment
                                  GL_RENDERBUFFER,  // render-buffer target
                                  handle.value()    // render-buffer
       );
       break;
   }
+
   return true;
 }
 
 // |Texture|
 Scalar TextureGLES::GetYCoordScale() const {
-  switch (GetIntent()) {
-    case TextureIntent::kUploadFromHost:
+  switch (GetCoordinateSystem()) {
+    case TextureCoordinateSystem::kUploadFromHost:
       return 1.0;
-    case TextureIntent::kRenderToTexture:
+    case TextureCoordinateSystem::kRenderToTexture:
       return -1.0;
   }
   FML_UNREACHABLE();

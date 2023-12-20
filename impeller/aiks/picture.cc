@@ -20,36 +20,82 @@ std::optional<Snapshot> Picture::Snapshot(AiksContext& context) {
     return std::nullopt;
   }
 
-  const auto translate = Matrix::MakeTranslation(-coverage->origin);
+  const auto translate = Matrix::MakeTranslation(-coverage->GetOrigin());
+  auto texture =
+      RenderToTexture(context, ISize(coverage->GetSize()), translate);
+  return impeller::Snapshot{
+      .texture = std::move(texture),
+      .transform = Matrix::MakeTranslation(coverage->GetOrigin())};
+}
+
+std::shared_ptr<Image> Picture::ToImage(AiksContext& context,
+                                        ISize size) const {
+  if (size.IsEmpty()) {
+    return nullptr;
+  }
+  auto texture = RenderToTexture(context, size);
+  return texture ? std::make_shared<Image>(texture) : nullptr;
+}
+
+std::shared_ptr<Texture> Picture::RenderToTexture(
+    AiksContext& context,
+    ISize size,
+    std::optional<const Matrix> translate) const {
+  FML_DCHECK(!size.IsEmpty());
+
   pass->IterateAllEntities([&translate](auto& entity) -> bool {
-    entity.SetTransformation(translate * entity.GetTransformation());
+    auto matrix = translate.has_value()
+                      ? translate.value() * entity.GetTransform()
+                      : entity.GetTransform();
+    entity.SetTransform(matrix);
     return true;
   });
 
   // This texture isn't host visible, but we might want to add host visible
   // features to Image someday.
-  auto target = RenderTarget::CreateOffscreen(
-      *context.GetContext(),
-      ISize(coverage->size.width, coverage->size.height));
+  auto impeller_context = context.GetContext();
+  // Do not use the render target cache as the lifecycle of this texture
+  // will outlive a particular frame.
+  RenderTargetAllocator render_target_allocator =
+      RenderTargetAllocator(impeller_context->GetResourceAllocator());
+  RenderTarget target;
+  if (impeller_context->GetCapabilities()->SupportsOffscreenMSAA()) {
+    target = RenderTarget::CreateOffscreenMSAA(
+        *impeller_context,        // context
+        render_target_allocator,  // allocator
+        size,                     // size
+        "Picture Snapshot MSAA",  // label
+        RenderTarget::
+            kDefaultColorAttachmentConfigMSAA,  // color_attachment_config
+        std::nullopt                            // stencil_attachment_config
+    );
+  } else {
+    target = RenderTarget::CreateOffscreen(
+        *impeller_context,                            // context
+        render_target_allocator,                      // allocator
+        size,                                         // size
+        "Picture Snapshot",                           // label
+        RenderTarget::kDefaultColorAttachmentConfig,  // color_attachment_config
+        std::nullopt  // stencil_attachment_config
+    );
+  }
   if (!target.IsValid()) {
     VALIDATION_LOG << "Could not create valid RenderTarget.";
-    return std::nullopt;
+    return nullptr;
   }
 
   if (!context.Render(*this, target)) {
     VALIDATION_LOG << "Could not render Picture to Texture.";
-    return std::nullopt;
+    return nullptr;
   }
 
   auto texture = target.GetRenderTargetTexture();
   if (!texture) {
     VALIDATION_LOG << "RenderTarget has no target texture.";
-    return std::nullopt;
+    return nullptr;
   }
 
-  return impeller::Snapshot{
-      .texture = std::move(texture),
-      .transform = translate.MakeTranslation(coverage->origin)};
-};
+  return texture;
+}
 
 }  // namespace impeller

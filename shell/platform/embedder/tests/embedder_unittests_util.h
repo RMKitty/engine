@@ -8,6 +8,7 @@
 #define FML_USED_ON_EMBEDDER
 
 #include <future>
+#include <utility>
 
 #include "flutter/fml/mapping.h"
 #include "flutter/fml/message_loop.h"
@@ -23,7 +24,7 @@ namespace testing {
 sk_sp<SkSurface> CreateRenderSurface(const FlutterLayer& layer,
                                      GrDirectContext* context);
 
-bool RasterImagesAreSame(sk_sp<SkImage> a, sk_sp<SkImage> b);
+bool RasterImagesAreSame(const sk_sp<SkImage>& a, const sk_sp<SkImage>& b);
 
 /// @brief      Prepends a prefix to the name which is unique to the test
 ///             context type. This is useful for tests that use
@@ -61,10 +62,10 @@ void ConfigureBackingStore(FlutterBackingStore& backing_store,
 
 bool WriteImageToDisk(const fml::UniqueFD& directory,
                       const std::string& name,
-                      sk_sp<SkImage> image);
+                      const sk_sp<SkImage>& image);
 
 bool ImageMatchesFixture(const std::string& fixture_file_name,
-                         sk_sp<SkImage> scene_image);
+                         const sk_sp<SkImage>& scene_image);
 
 bool ImageMatchesFixture(const std::string& fixture_file_name,
                          std::future<sk_sp<SkImage>>& scene_image);
@@ -79,12 +80,14 @@ void FilterMutationsByType(
     const FlutterPlatformViewMutation** mutations,
     size_t count,
     FlutterPlatformViewMutationType type,
-    std::function<void(const FlutterPlatformViewMutation& mutation)> handler);
+    const std::function<void(const FlutterPlatformViewMutation& mutation)>&
+        handler);
 
 void FilterMutationsByType(
     const FlutterPlatformView* view,
     FlutterPlatformViewMutationType type,
-    std::function<void(const FlutterPlatformViewMutation& mutation)> handler);
+    const std::function<void(const FlutterPlatformViewMutation& mutation)>&
+        handler);
 
 SkMatrix GetTotalMutationTransformationMatrix(
     const FlutterPlatformViewMutation** mutations,
@@ -102,8 +105,8 @@ class EmbedderTestTaskRunner {
   EmbedderTestTaskRunner(fml::RefPtr<fml::TaskRunner> real_task_runner,
                          TaskExpiryCallback on_task_expired)
       : identifier_(++sEmbedderTaskRunnerIdentifiers),
-        real_task_runner_(real_task_runner),
-        on_task_expired_(on_task_expired) {
+        real_task_runner_(std::move(real_task_runner)),
+        on_task_expired_(std::move(on_task_expired)) {
     FML_CHECK(real_task_runner_);
     FML_CHECK(on_task_expired_);
 

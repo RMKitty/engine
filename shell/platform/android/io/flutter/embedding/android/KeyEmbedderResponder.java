@@ -4,13 +4,17 @@
 
 package io.flutter.embedding.android;
 
+import android.view.InputDevice;
 import android.view.KeyEvent;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import io.flutter.embedding.android.KeyboardMap.PressingGoal;
 import io.flutter.embedding.android.KeyboardMap.TogglingGoal;
 import io.flutter.plugin.common.BinaryMessenger;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.Map;
 
 /**
  * A {@link KeyboardManager.Responder} of {@link KeyboardManager} that handles events by sending
@@ -120,17 +124,26 @@ public class KeyEmbedderResponder implements KeyboardManager.Responder {
   // dispatches synthesized events so that the state of these keys matches the true state taking
   // the current event in consideration.
   //
+  // Events that should be synthesized before the main event are synthesized
+  // immediately, while events that should be synthesized after the main event are appended to
+  // `postSynchronize`.
+  //
   // Although Android KeyEvent defined bitmasks for sided modifiers (SHIFT_LEFT_ON and
   // SHIFT_RIGHT_ON),
   // this function only uses the unsided modifiers (SHIFT_ON), due to the weird behaviors observed
   // on ChromeOS, where right modifiers produce events with UNSIDED | LEFT_SIDE meta state bits.
   void synchronizePressingKey(
-      PressingGoal goal, boolean truePressed, long eventLogicalKey, KeyEvent event) {
+      PressingGoal goal,
+      boolean truePressed,
+      long eventLogicalKey,
+      long eventPhysicalKey,
+      KeyEvent event,
+      ArrayList<Runnable> postSynchronize) {
     // During an incoming event, there might be a synthesized Flutter event for each key of each
     // pressing goal, followed by an eventual main Flutter event.
     //
-    //    NowState ---------------->  PreEventState --------------> TrueState
-    //              Synchronization                      Event
+    //    NowState ---------------->  PreEventState --------------> -------------->TrueState
+    //              PreSynchronize                       Event      PostSynchronize
     //
     // The goal of the synchronization algorithm is to derive a pre-event state that can satisfy the
     // true state (`truePressed`) after the event, and that requires as few synthesized events based
@@ -141,17 +154,18 @@ public class KeyEmbedderResponder implements KeyboardManager.Responder {
     // 1. Find the current states of all keys.
     // 2. Derive the pre-event state of the event key (if applicable.)
     for (int keyIdx = 0; keyIdx < goal.keys.length; keyIdx += 1) {
-      nowStates[keyIdx] = pressingRecords.containsKey(goal.keys[keyIdx].physicalKey);
-      if (goal.keys[keyIdx].logicalKey == eventLogicalKey) {
+      final KeyboardMap.KeyPair key = goal.keys[keyIdx];
+      nowStates[keyIdx] = pressingRecords.containsKey(key.physicalKey);
+      if (key.logicalKey == eventLogicalKey) {
         switch (getEventType(event)) {
           case kDown:
             preEventStates[keyIdx] = false;
             postEventAnyPressed = true;
             if (!truePressed) {
-              throw new AssertionError(
-                  String.format(
-                      "Unexpected metaState 0 for key 0x%x during an ACTION_down event.",
-                      eventLogicalKey));
+              postSynchronize.add(
+                  () ->
+                      synthesizeEvent(
+                          false, key.logicalKey, eventPhysicalKey, event.getEventTime()));
             }
             break;
           case kUp:
@@ -165,10 +179,10 @@ public class KeyEmbedderResponder implements KeyboardManager.Responder {
             // synthesize a down event here, or there will be a down event *and* a repeat event,
             // both of which have printable characters. Obviously don't synthesize up events either.
             if (!truePressed) {
-              throw new AssertionError(
-                  String.format(
-                      "Unexpected metaState 0 for key 0x%x during an ACTION_down repeat event.",
-                      eventLogicalKey));
+              postSynchronize.add(
+                  () ->
+                      synthesizeEvent(
+                          false, key.logicalKey, key.physicalKey, event.getEventTime()));
             }
             preEventStates[keyIdx] = nowStates[keyIdx];
             postEventAnyPressed = true;
@@ -260,8 +274,15 @@ public class KeyEmbedderResponder implements KeyboardManager.Responder {
     final Long physicalKey = getPhysicalKey(event);
     final Long logicalKey = getLogicalKey(event);
 
+    final ArrayList<Runnable> postSynchronizeEvents = new ArrayList<>();
     for (final PressingGoal goal : KeyboardMap.pressingGoals) {
-      synchronizePressingKey(goal, (event.getMetaState() & goal.mask) != 0, logicalKey, event);
+      synchronizePressingKey(
+          goal,
+          (event.getMetaState() & goal.mask) != 0,
+          logicalKey,
+          physicalKey,
+          event,
+          postSynchronizeEvents);
     }
 
     for (final TogglingGoal goal : togglingGoals.values()) {
@@ -321,14 +342,38 @@ public class KeyEmbedderResponder implements KeyboardManager.Responder {
     }
 
     final KeyData output = new KeyData();
+
+    switch (event.getSource()) {
+      default:
+      case InputDevice.SOURCE_KEYBOARD:
+        output.deviceType = KeyData.DeviceType.kKeyboard;
+        break;
+      case InputDevice.SOURCE_DPAD:
+        output.deviceType = KeyData.DeviceType.kDirectionalPad;
+        break;
+      case InputDevice.SOURCE_GAMEPAD:
+        output.deviceType = KeyData.DeviceType.kGamepad;
+        break;
+      case InputDevice.SOURCE_JOYSTICK:
+        output.deviceType = KeyData.DeviceType.kJoystick;
+        break;
+      case InputDevice.SOURCE_HDMI:
+        output.deviceType = KeyData.DeviceType.kHdmi;
+        break;
+    }
+
     output.timestamp = event.getEventTime();
     output.type = type;
     output.logicalKey = logicalKey;
     output.physicalKey = physicalKey;
     output.character = character;
     output.synthesized = false;
+    output.deviceType = KeyData.DeviceType.kKeyboard;
 
     sendKeyEvent(output, onKeyEventHandledCallback);
+    for (final Runnable postSyncEvent : postSynchronizeEvents) {
+      postSyncEvent.run();
+    }
     return true;
   }
 
@@ -340,6 +385,7 @@ public class KeyEmbedderResponder implements KeyboardManager.Responder {
     output.physicalKey = physicalKey;
     output.character = null;
     output.synthesized = true;
+    output.deviceType = KeyData.DeviceType.kKeyboard;
     if (physicalKey != 0 && logicalKey != 0) {
       updatePressingState(physicalKey, isDown ? logicalKey : null);
     }
@@ -383,5 +429,15 @@ public class KeyEmbedderResponder implements KeyboardManager.Responder {
       synthesizeEvent(true, 0L, 0L, 0L);
       onKeyEventHandledCallback.onKeyEventHandled(true);
     }
+  }
+
+  /**
+   * Returns an unmodifiable view of the pressed state.
+   *
+   * @return A map whose keys are physical keyboard key IDs and values are the corresponding logical
+   *     keyboard key IDs.
+   */
+  public Map<Long, Long> getPressedState() {
+    return Collections.unmodifiableMap(pressingRecords);
   }
 }

@@ -30,11 +30,13 @@ enum PointerSignalKind {
   none,
   scroll,
   scrollInertiaCancel,
+  scale,
   unknown
 }
 
 class PointerData {
   const PointerData({
+    this.viewId = 0,
     this.embedderId = 0,
     this.timeStamp = Duration.zero,
     this.change = PointerChange.cancel,
@@ -71,6 +73,7 @@ class PointerData {
     this.scale = 0.0,
     this.rotation = 0.0,
   });
+  final int viewId;
   final int embedderId;
   final Duration timeStamp;
   final PointerChange change;
@@ -150,7 +153,6 @@ class PointerData {
 }
 
 class PointerDataPacket {
-  const PointerDataPacket({this.data = const <PointerData>[]})
-      : assert(data != null); // ignore: unnecessary_null_comparison
+  const PointerDataPacket({this.data = const <PointerData>[]});
   final List<PointerData> data;
 }

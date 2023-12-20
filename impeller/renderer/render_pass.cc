@@ -6,18 +6,45 @@
 
 namespace impeller {
 
-RenderPass::RenderPass(RenderTarget target)
-    : render_target_(std::move(target)),
-      transients_buffer_(HostBuffer::Create()) {}
+RenderPass::RenderPass(std::weak_ptr<const Context> context,
+                       const RenderTarget& target)
+    : context_(std::move(context)),
+      sample_count_(target.GetSampleCount()),
+      pixel_format_(target.GetRenderTargetPixelFormat()),
+      has_stencil_attachment_(target.GetStencilAttachment().has_value()),
+      render_target_size_(target.GetRenderTargetSize()),
+      render_target_(target),
+      transients_buffer_() {
+  auto strong_context = context_.lock();
+  FML_DCHECK(strong_context);
+  transients_buffer_ = strong_context->GetHostBufferPool().Grab();
+}
 
-RenderPass::~RenderPass() = default;
+RenderPass::~RenderPass() {
+  auto strong_context = context_.lock();
+  if (strong_context) {
+    strong_context->GetHostBufferPool().Recycle(transients_buffer_);
+  }
+}
+
+SampleCount RenderPass::GetSampleCount() const {
+  return sample_count_;
+}
+
+PixelFormat RenderPass::GetRenderTargetPixelFormat() const {
+  return pixel_format_;
+}
+
+bool RenderPass::HasStencilAttachment() const {
+  return has_stencil_attachment_;
+}
 
 const RenderTarget& RenderPass::GetRenderTarget() const {
   return render_target_;
 }
 
 ISize RenderPass::GetRenderTargetSize() const {
-  return render_target_.GetRenderTargetSize();
+  return render_target_size_;
 }
 
 HostBuffer& RenderPass::GetTransientsBuffer() {
@@ -32,14 +59,14 @@ void RenderPass::SetLabel(std::string label) {
   OnSetLabel(std::move(label));
 }
 
-bool RenderPass::AddCommand(Command command) {
-  if (!command) {
+bool RenderPass::AddCommand(Command&& command) {
+  if (!command.IsValid()) {
     VALIDATION_LOG << "Attempted to add an invalid command to the render pass.";
     return false;
   }
 
   if (command.scissor.has_value()) {
-    auto target_rect = IRect({}, render_target_.GetRenderTargetSize());
+    auto target_rect = IRect::MakeSize(render_target_.GetRenderTargetSize());
     if (!target_rect.Contains(command.scissor.value())) {
       VALIDATION_LOG << "Cannot apply a scissor that lies outside the bounds "
                         "of the render target.";
@@ -47,13 +74,8 @@ bool RenderPass::AddCommand(Command command) {
     }
   }
 
-  if (command.index_count == 0u) {
-    // Essentially a no-op. Don't record the command but this is not necessary
-    // an error either.
-    return true;
-  }
-
-  if (command.instance_count == 0u) {
+  if (command.vertex_buffer.vertex_count == 0u ||
+      command.instance_count == 0u) {
     // Essentially a no-op. Don't record the command but this is not necessary
     // an error either.
     return true;
@@ -61,6 +83,19 @@ bool RenderPass::AddCommand(Command command) {
 
   commands_.emplace_back(std::move(command));
   return true;
+}
+
+bool RenderPass::EncodeCommands() const {
+  auto context = context_.lock();
+  // The context could have been collected in the meantime.
+  if (!context) {
+    return false;
+  }
+  return OnEncodeCommands(*context);
+}
+
+const std::weak_ptr<const Context>& RenderPass::GetContext() const {
+  return context_;
 }
 
 }  // namespace impeller

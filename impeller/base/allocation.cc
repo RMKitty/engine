@@ -5,8 +5,8 @@
 #include "impeller/base/allocation.h"
 
 #include <algorithm>
+#include <cstring>
 
-#include "flutter/fml/logging.h"
 #include "impeller/base/validation.h"
 
 namespace impeller {
@@ -61,7 +61,7 @@ bool Allocation::ReserveNPOT(size_t reserved) {
 }
 
 bool Allocation::Reserve(size_t reserved) {
-  if (reserved == reserved_) {
+  if (reserved <= reserved_) {
     return true;
   }
 
@@ -93,11 +93,11 @@ std::shared_ptr<fml::Mapping> CreateMappingWithCopy(const uint8_t* contents,
 
   std::memmove(allocation->GetBuffer(), contents, length);
 
-  return CreateMappingFromAllocation(std::move(allocation));
+  return CreateMappingFromAllocation(allocation);
 }
 
 std::shared_ptr<fml::Mapping> CreateMappingFromAllocation(
-    std::shared_ptr<Allocation> allocation) {
+    const std::shared_ptr<Allocation>& allocation) {
   if (!allocation) {
     return nullptr;
   }

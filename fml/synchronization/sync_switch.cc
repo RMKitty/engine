@@ -8,13 +8,13 @@ namespace fml {
 
 SyncSwitch::Handlers& SyncSwitch::Handlers::SetIfTrue(
     const std::function<void()>& handler) {
-  true_handler = std::move(handler);
+  true_handler = handler;
   return *this;
 }
 
 SyncSwitch::Handlers& SyncSwitch::Handlers::SetIfFalse(
     const std::function<void()>& handler) {
-  false_handler = std::move(handler);
+  false_handler = handler;
   return *this;
 }
 
@@ -32,8 +32,26 @@ void SyncSwitch::Execute(const SyncSwitch::Handlers& handlers) const {
 }
 
 void SyncSwitch::SetSwitch(bool value) {
-  fml::UniqueLock lock(*mutex_);
-  value_ = value;
+  {
+    fml::UniqueLock lock(*mutex_);
+    value_ = value;
+  }
+  for (Observer* observer : observers_) {
+    observer->OnSyncSwitchUpdate(value);
+  }
 }
 
+void SyncSwitch::AddObserver(Observer* observer) const {
+  fml::UniqueLock lock(*mutex_);
+  if (std::find(observers_.begin(), observers_.end(), observer) ==
+      observers_.end()) {
+    observers_.push_back(observer);
+  }
+}
+
+void SyncSwitch::RemoveObserver(Observer* observer) const {
+  fml::UniqueLock lock(*mutex_);
+  observers_.erase(std::remove(observers_.begin(), observers_.end(), observer),
+                   observers_.end());
+}
 }  // namespace fml

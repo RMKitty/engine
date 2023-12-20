@@ -9,17 +9,20 @@
 #include "flutter/fml/closure.h"
 #include "impeller/base/config.h"
 #include "impeller/base/validation.h"
-#include "impeller/blobcat/blob_library.h"
 #include "impeller/renderer/backend/gles/shader_function_gles.h"
+#include "impeller/shader_archive/multi_arch_shader_archive.h"
+#include "impeller/shader_archive/shader_archive.h"
 
 namespace impeller {
 
-static ShaderStage ToShaderStage(Blob::ShaderType type) {
+static ShaderStage ToShaderStage(ArchiveShaderType type) {
   switch (type) {
-    case Blob::ShaderType::kVertex:
+    case ArchiveShaderType::kVertex:
       return ShaderStage::kVertex;
-    case Blob::ShaderType::kFragment:
+    case ArchiveShaderType::kFragment:
       return ShaderStage::kFragment;
+    case ArchiveShaderType::kCompute:
+      return ShaderStage::kCompute;
   }
   FML_UNREACHABLE();
 }
@@ -38,12 +41,6 @@ static std::string GLESShaderNameToShaderKeyName(const std::string& name,
     case ShaderStage::kFragment:
       stream << "_fragment_";
       break;
-    case ShaderStage::kTessellationControl:
-      stream << "_tessellation_control_";
-      break;
-    case ShaderStage::kTessellationEvaluation:
-      stream << "_tessellation_evaluation_";
-      break;
     case ShaderStage::kCompute:
       stream << "_compute_";
       break;
@@ -53,7 +50,7 @@ static std::string GLESShaderNameToShaderKeyName(const std::string& name,
 }
 
 ShaderLibraryGLES::ShaderLibraryGLES(
-    std::vector<std::shared_ptr<fml::Mapping>> shader_libraries) {
+    const std::vector<std::shared_ptr<fml::Mapping>>& shader_libraries) {
   ShaderFunctionMap functions;
   auto iterator = [&functions, library_id = library_id_](auto type,           //
                                                          const auto& name,    //
@@ -72,12 +69,13 @@ ShaderLibraryGLES::ShaderLibraryGLES(
     return true;
   };
   for (auto library : shader_libraries) {
-    auto blob_library = BlobLibrary{std::move(library)};
-    if (!blob_library.IsValid()) {
-      VALIDATION_LOG << "Could not construct blob library for shaders.";
+    auto gles_archive = MultiArchShaderArchive::CreateArchiveFromMapping(
+        std::move(library), ArchiveRenderingBackend::kOpenGLES);
+    if (!gles_archive || !gles_archive->IsValid()) {
+      VALIDATION_LOG << "Could not construct shader library.";
       return;
     }
-    blob_library.IterateAllBlobs(iterator);
+    gles_archive->IterateAllShaders(iterator);
   }
 
   functions_ = functions;
@@ -133,6 +131,25 @@ void ShaderLibraryGLES::RegisterFunction(std::string name,
       ));
   auto_fail.Release();
   callback(true);
+}
+
+// |ShaderLibrary|
+void ShaderLibraryGLES::UnregisterFunction(std::string name,
+                                           ShaderStage stage) {
+  ReaderLock lock(functions_mutex_);
+
+  const auto key = ShaderKey{name, stage};
+
+  auto found = functions_.find(key);
+  if (found != functions_.end()) {
+    VALIDATION_LOG << "Library function named " << name
+                   << " was not found, so it couldn't be unregistered.";
+    return;
+  }
+
+  functions_.erase(found);
+
+  return;
 }
 
 }  // namespace impeller

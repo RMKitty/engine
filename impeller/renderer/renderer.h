@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef FLUTTER_IMPELLER_RENDERER_RENDERER_H_
+#define FLUTTER_IMPELLER_RENDERER_RENDERER_H_
 
 #include <functional>
 #include <memory>
@@ -24,14 +25,15 @@ class Renderer {
 
   using RenderCallback = std::function<bool(RenderTarget& render_target)>;
 
-  Renderer(std::shared_ptr<Context> context,
-           size_t max_frames_in_flight = kDefaultMaxFramesInFlight);
+  explicit Renderer(std::shared_ptr<Context> context,
+                    size_t max_frames_in_flight = kDefaultMaxFramesInFlight);
 
   ~Renderer();
 
   bool IsValid() const;
 
-  bool Render(std::unique_ptr<Surface> surface, RenderCallback callback) const;
+  bool Render(std::unique_ptr<Surface> surface,
+              const RenderCallback& callback) const;
 
   std::shared_ptr<Context> GetContext() const;
 
@@ -40,7 +42,11 @@ class Renderer {
   std::shared_ptr<Context> context_;
   bool is_valid_ = false;
 
-  FML_DISALLOW_COPY_AND_ASSIGN(Renderer);
+  Renderer(const Renderer&) = delete;
+
+  Renderer& operator=(const Renderer&) = delete;
 };
 
 }  // namespace impeller
+
+#endif  // FLUTTER_IMPELLER_RENDERER_RENDERER_H_

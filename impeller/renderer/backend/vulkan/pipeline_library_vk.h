@@ -2,13 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef FLUTTER_IMPELLER_RENDERER_BACKEND_VULKAN_PIPELINE_LIBRARY_VK_H_
+#define FLUTTER_IMPELLER_RENDERER_BACKEND_VULKAN_PIPELINE_LIBRARY_VK_H_
+
+#include <atomic>
 
 #include "flutter/fml/concurrent_message_loop.h"
 #include "flutter/fml/macros.h"
 #include "flutter/fml/mapping.h"
+#include "flutter/fml/unique_fd.h"
 #include "impeller/base/backend_cast.h"
 #include "impeller/base/thread.h"
+#include "impeller/renderer/backend/vulkan/compute_pipeline_vk.h"
+#include "impeller/renderer/backend/vulkan/pipeline_cache_vk.h"
 #include "impeller/renderer/backend/vulkan/pipeline_vk.h"
 #include "impeller/renderer/backend/vulkan/vk.h"
 #include "impeller/renderer/pipeline_library.h"
@@ -24,38 +30,56 @@ class PipelineLibraryVK final
   // |PipelineLibrary|
   ~PipelineLibraryVK() override;
 
+  void DidAcquireSurfaceFrame();
+
  private:
   friend ContextVK;
 
-  vk::Device device_;
-  // On locking around the pipeline cache: The cache is internally synchronized.
-  // So there is no need to hold a writer lock around its use when pipelines are
-  // being created. The time it takes for implementations to spend within the
-  // critical section of the cache is limited compared to the time it
-  // takes for the "create pipeline" call itself. The writer lock is only
-  // necessary when fetching pipeline cache data for persisting to disk.
-  mutable RWMutex cache_mutex_;
-  vk::UniquePipelineCache cache_ IPLR_GUARDED_BY(cache_mutex_);
+  std::weak_ptr<DeviceHolder> device_holder_;
+  bool supports_framebuffer_fetch_ = false;
+  std::shared_ptr<PipelineCacheVK> pso_cache_;
   std::shared_ptr<fml::ConcurrentTaskRunner> worker_task_runner_;
   Mutex pipelines_mutex_;
   PipelineMap pipelines_ IPLR_GUARDED_BY(pipelines_mutex_);
+  Mutex compute_pipelines_mutex_;
+  ComputePipelineMap compute_pipelines_
+      IPLR_GUARDED_BY(compute_pipelines_mutex_);
+  std::atomic_size_t frames_acquired_ = 0u;
   bool is_valid_ = false;
 
   PipelineLibraryVK(
-      const vk::Device& device,
-      const std::shared_ptr<const fml::Mapping>& pipeline_cache_data,
+      const std::shared_ptr<DeviceHolder>& device_holder,
+      std::shared_ptr<const Capabilities> caps,
+      fml::UniqueFD cache_directory,
       std::shared_ptr<fml::ConcurrentTaskRunner> worker_task_runner);
 
   // |PipelineLibrary|
   bool IsValid() const override;
 
   // |PipelineLibrary|
-  PipelineFuture GetRenderPipeline(PipelineDescriptor descriptor) override;
+  PipelineFuture<PipelineDescriptor> GetPipeline(
+      PipelineDescriptor descriptor) override;
 
-  std::shared_ptr<PipelineVK> CreatePipeline(
-      const PipelineDescriptor& desc) const;
+  // |PipelineLibrary|
+  PipelineFuture<ComputePipelineDescriptor> GetPipeline(
+      ComputePipelineDescriptor descriptor) override;
 
-  FML_DISALLOW_COPY_AND_ASSIGN(PipelineLibraryVK);
+  // |PipelineLibrary|
+  void RemovePipelinesWithEntryPoint(
+      std::shared_ptr<const ShaderFunction> function) override;
+
+  std::unique_ptr<PipelineVK> CreatePipeline(const PipelineDescriptor& desc);
+
+  std::unique_ptr<ComputePipelineVK> CreateComputePipeline(
+      const ComputePipelineDescriptor& desc);
+
+  void PersistPipelineCacheToDisk();
+
+  PipelineLibraryVK(const PipelineLibraryVK&) = delete;
+
+  PipelineLibraryVK& operator=(const PipelineLibraryVK&) = delete;
 };
 
 }  // namespace impeller
+
+#endif  // FLUTTER_IMPELLER_RENDERER_BACKEND_VULKAN_PIPELINE_LIBRARY_VK_H_

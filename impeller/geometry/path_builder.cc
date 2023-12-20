@@ -13,7 +13,7 @@ PathBuilder::PathBuilder() = default;
 PathBuilder::~PathBuilder() = default;
 
 Path PathBuilder::CopyPath(FillType fill) const {
-  auto path = prototype_;
+  auto path = prototype_.Clone();
   path.SetFillType(fill);
   return path;
 }
@@ -21,7 +21,17 @@ Path PathBuilder::CopyPath(FillType fill) const {
 Path PathBuilder::TakePath(FillType fill) {
   auto path = std::move(prototype_);
   path.SetFillType(fill);
+  path.SetConvexity(convexity_);
+  if (!did_compute_bounds_) {
+    path.ComputeBounds();
+  }
+  did_compute_bounds_ = false;
   return path;
+}
+
+void PathBuilder::Reserve(size_t point_size, size_t verb_size) {
+  prototype_.points_.reserve(point_size);
+  prototype_.points_.reserve(verb_size);
 }
 
 PathBuilder& PathBuilder::MoveTo(Point point, bool relative) {
@@ -71,35 +81,8 @@ PathBuilder& PathBuilder::QuadraticCurveTo(Point controlPoint,
   return *this;
 }
 
-Point PathBuilder::ReflectedQuadraticControlPoint1() const {
-  /*
-   *  If there is no previous command or if the previous command was not a
-   *  quadratic, assume the control point is coincident with the current point.
-   */
-  if (prototype_.GetComponentCount() == 0) {
-    return current_;
-  }
-
-  QuadraticPathComponent quad;
-  if (!prototype_.GetQuadraticComponentAtIndex(
-          prototype_.GetComponentCount() - 1, quad)) {
-    return current_;
-  }
-
-  /*
-   *  The control point is assumed to be the reflection of the control point on
-   *  the previous command relative to the current point.
-   */
-  return (current_ * 2.0) - quad.cp;
-}
-
-PathBuilder& PathBuilder::SmoothQuadraticCurveTo(Point point, bool relative) {
-  point = relative ? current_ + point : point;
-  /*
-   *  The reflected control point is absolute and we made the endpoint absolute
-   *  too. So there the last argument is always false (i.e, not relative).
-   */
-  QuadraticCurveTo(point, ReflectedQuadraticControlPoint1(), false);
+PathBuilder& PathBuilder::SetConvexity(Convexity value) {
+  convexity_ = value;
   return *this;
 }
 
@@ -112,44 +95,6 @@ PathBuilder& PathBuilder::CubicCurveTo(Point controlPoint1,
   point = relative ? current_ + point : point;
   prototype_.AddCubicComponent(current_, controlPoint1, controlPoint2, point);
   current_ = point;
-  return *this;
-}
-
-Point PathBuilder::ReflectedCubicControlPoint1() const {
-  /*
-   *  If there is no previous command or if the previous command was not a
-   *  cubic, assume the first control point is coincident with the current
-   *  point.
-   */
-  if (prototype_.GetComponentCount() == 0) {
-    return current_;
-  }
-
-  CubicPathComponent cubic;
-  if (!prototype_.GetCubicComponentAtIndex(prototype_.GetComponentCount() - 1,
-                                           cubic)) {
-    return current_;
-  }
-
-  /*
-   *  The first control point is assumed to be the reflection of the second
-   *  control point on the previous command relative to the current point.
-   */
-  return (current_ * 2.0) - cubic.cp2;
-}
-
-PathBuilder& PathBuilder::SmoothCubicCurveTo(Point controlPoint2,
-                                             Point point,
-                                             bool relative) {
-  auto controlPoint1 = ReflectedCubicControlPoint1();
-  controlPoint2 = relative ? current_ + controlPoint2 : controlPoint2;
-  auto endpoint = relative ? current_ + point : point;
-
-  CubicCurveTo(endpoint,       // endpoint
-               controlPoint1,  // control point 1
-               controlPoint2,  // control point 2
-               false           // relative since all points are already absolute
-  );
   return *this;
 }
 
@@ -177,21 +122,27 @@ PathBuilder& PathBuilder::AddRect(Rect rect) {
   auto tr = rect.origin + Point{rect.size.width, 0.0};
 
   MoveTo(tl);
-  prototype_.AddLinearComponent(tl, tr)
-      .AddLinearComponent(tr, br)
-      .AddLinearComponent(br, bl);
+  LineTo(tr);
+  LineTo(br);
+  LineTo(bl);
   Close();
 
   return *this;
 }
 
 PathBuilder& PathBuilder::AddCircle(const Point& c, Scalar r) {
-  return AddOval(Rect{c.x - r, c.y - r, 2.0f * r, 2.0f * r});
+  return AddOval(Rect::MakeXYWH(c.x - r, c.y - r, 2.0f * r, 2.0f * r));
 }
 
 PathBuilder& PathBuilder::AddRoundedRect(Rect rect, Scalar radius) {
   return radius <= 0.0 ? AddRect(rect)
-                       : AddRoundedRect(rect, {radius, radius, radius, radius});
+                       : AddRoundedRect(rect, RoundingRadii(radius));
+}
+
+PathBuilder& PathBuilder::AddRoundedRect(Rect rect, Size radii) {
+  return radii.width <= 0 || radii.height <= 0
+             ? AddRect(rect)
+             : AddRoundedRect(rect, RoundingRadii(radii));
 }
 
 PathBuilder& PathBuilder::AddRoundedRect(Rect rect, RoundingRadii radii) {
@@ -200,11 +151,6 @@ PathBuilder& PathBuilder::AddRoundedRect(Rect rect, RoundingRadii radii) {
   }
 
   current_ = rect.origin + Point{radii.top_left.x, 0.0};
-
-  const auto magic_top_right = radii.top_right * kArcApproximationMagic;
-  const auto magic_bottom_right = radii.bottom_right * kArcApproximationMagic;
-  const auto magic_bottom_left = radii.bottom_left * kArcApproximationMagic;
-  const auto magic_top_left = radii.top_left * kArcApproximationMagic;
 
   MoveTo({rect.origin.x + radii.top_left.x, rect.origin.y});
 
@@ -218,13 +164,7 @@ PathBuilder& PathBuilder::AddRoundedRect(Rect rect, RoundingRadii radii) {
   //----------------------------------------------------------------------------
   // Top right arc.
   //
-  prototype_.AddCubicComponent(
-      {rect.origin.x + rect.size.width - radii.top_right.x, rect.origin.y},
-      {rect.origin.x + rect.size.width - radii.top_right.x + magic_top_right.x,
-       rect.origin.y},
-      {rect.origin.x + rect.size.width,
-       rect.origin.y + radii.top_right.y - magic_top_right.y},
-      {rect.origin.x + rect.size.width, rect.origin.y + radii.top_right.y});
+  AddRoundedRectTopRight(rect, radii);
 
   //----------------------------------------------------------------------------
   // Right line.
@@ -237,17 +177,7 @@ PathBuilder& PathBuilder::AddRoundedRect(Rect rect, RoundingRadii radii) {
   //----------------------------------------------------------------------------
   // Bottom right arc.
   //
-  prototype_.AddCubicComponent(
-      {rect.origin.x + rect.size.width,
-       rect.origin.y + rect.size.height - radii.bottom_right.y},
-      {rect.origin.x + rect.size.width, rect.origin.y + rect.size.height -
-                                            radii.bottom_right.y +
-                                            magic_bottom_right.y},
-      {rect.origin.x + rect.size.width - radii.bottom_right.x +
-           magic_bottom_right.x,
-       rect.origin.y + rect.size.height},
-      {rect.origin.x + rect.size.width - radii.bottom_right.x,
-       rect.origin.y + rect.size.height});
+  AddRoundedRectBottomRight(rect, radii);
 
   //----------------------------------------------------------------------------
   // Bottom line.
@@ -260,13 +190,7 @@ PathBuilder& PathBuilder::AddRoundedRect(Rect rect, RoundingRadii radii) {
   //----------------------------------------------------------------------------
   // Bottom left arc.
   //
-  prototype_.AddCubicComponent(
-      {rect.origin.x + radii.bottom_left.x, rect.origin.y + rect.size.height},
-      {rect.origin.x + radii.bottom_left.x - magic_bottom_left.x,
-       rect.origin.y + rect.size.height},
-      {rect.origin.x, rect.origin.y + rect.size.height - radii.bottom_left.y +
-                          magic_bottom_left.y},
-      {rect.origin.x, rect.origin.y + rect.size.height - radii.bottom_left.y});
+  AddRoundedRectBottomLeft(rect, radii);
 
   //----------------------------------------------------------------------------
   // Left line.
@@ -278,14 +202,64 @@ PathBuilder& PathBuilder::AddRoundedRect(Rect rect, RoundingRadii radii) {
   //----------------------------------------------------------------------------
   // Top left arc.
   //
+  AddRoundedRectTopLeft(rect, radii);
+
+  Close();
+
+  return *this;
+}
+
+PathBuilder& PathBuilder::AddRoundedRectTopLeft(Rect rect,
+                                                RoundingRadii radii) {
+  const auto magic_top_left = radii.top_left * kArcApproximationMagic;
   prototype_.AddCubicComponent(
       {rect.origin.x, rect.origin.y + radii.top_left.y},
       {rect.origin.x, rect.origin.y + radii.top_left.y - magic_top_left.y},
       {rect.origin.x + radii.top_left.x - magic_top_left.x, rect.origin.y},
       {rect.origin.x + radii.top_left.x, rect.origin.y});
+  return *this;
+}
 
-  Close();
+PathBuilder& PathBuilder::AddRoundedRectTopRight(Rect rect,
+                                                 RoundingRadii radii) {
+  const auto magic_top_right = radii.top_right * kArcApproximationMagic;
+  prototype_.AddCubicComponent(
+      {rect.origin.x + rect.size.width - radii.top_right.x, rect.origin.y},
+      {rect.origin.x + rect.size.width - radii.top_right.x + magic_top_right.x,
+       rect.origin.y},
+      {rect.origin.x + rect.size.width,
+       rect.origin.y + radii.top_right.y - magic_top_right.y},
+      {rect.origin.x + rect.size.width, rect.origin.y + radii.top_right.y});
+  return *this;
+}
 
+PathBuilder& PathBuilder::AddRoundedRectBottomRight(Rect rect,
+                                                    RoundingRadii radii) {
+  const auto magic_bottom_right = radii.bottom_right * kArcApproximationMagic;
+  prototype_.AddCubicComponent(
+      {rect.origin.x + rect.size.width,
+       rect.origin.y + rect.size.height - radii.bottom_right.y},
+      {rect.origin.x + rect.size.width, rect.origin.y + rect.size.height -
+                                            radii.bottom_right.y +
+                                            magic_bottom_right.y},
+      {rect.origin.x + rect.size.width - radii.bottom_right.x +
+           magic_bottom_right.x,
+       rect.origin.y + rect.size.height},
+      {rect.origin.x + rect.size.width - radii.bottom_right.x,
+       rect.origin.y + rect.size.height});
+  return *this;
+}
+
+PathBuilder& PathBuilder::AddRoundedRectBottomLeft(Rect rect,
+                                                   RoundingRadii radii) {
+  const auto magic_bottom_left = radii.bottom_left * kArcApproximationMagic;
+  prototype_.AddCubicComponent(
+      {rect.origin.x + radii.bottom_left.x, rect.origin.y + rect.size.height},
+      {rect.origin.x + radii.bottom_left.x - magic_bottom_left.x,
+       rect.origin.y + rect.size.height},
+      {rect.origin.x, rect.origin.y + rect.size.height - radii.bottom_left.y +
+                          magic_bottom_left.y},
+      {rect.origin.x, rect.origin.y + rect.size.height - radii.bottom_left.y});
   return *this;
 }
 
@@ -421,6 +395,17 @@ PathBuilder& PathBuilder::AddPath(const Path& path) {
     prototype_.AddContourComponent(m.destination);
   };
   path.EnumerateComponents(linear, quadratic, cubic, move);
+  return *this;
+}
+
+PathBuilder& PathBuilder::Shift(Point offset) {
+  prototype_.Shift(offset);
+  return *this;
+}
+
+PathBuilder& PathBuilder::SetBounds(Rect bounds) {
+  prototype_.SetBounds(bounds);
+  did_compute_bounds_ = true;
   return *this;
 }
 

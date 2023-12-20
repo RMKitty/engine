@@ -24,25 +24,16 @@ void ImageShader::Create(Dart_Handle wrapper) {
 }
 
 Dart_Handle ImageShader::initWithImage(CanvasImage* image,
-                                       SkTileMode tmx,
-                                       SkTileMode tmy,
+                                       DlTileMode tmx,
+                                       DlTileMode tmy,
                                        int filter_quality_index,
                                        Dart_Handle matrix_handle) {
-  if (!image) {
+  // CanvasImage should have already checked for a UI thread safe image.
+  if (!image || !image->image()->isUIThreadSafe()) {
     return ToDart("ImageShader constructor called with non-genuine Image.");
   }
 
-  if (image->image()->owning_context() != DlImage::OwningContext::kIO) {
-    // TODO(dnfield): it should be possible to support this
-    // https://github.com/flutter/flutter/issues/105085
-    return ToDart("ImageShader constructor with GPU image is not supported.");
-  }
-
-  auto raw_sk_image = image->image()->skia_image();
-  if (!raw_sk_image) {
-    return ToDart("ImageShader constructor with Impeller is not supported.");
-  }
-  sk_image_ = UIDartState::CreateGPUObject(std::move(raw_sk_image));
+  image_ = image->image();
   tonic::Float64List matrix4(matrix_handle);
   SkMatrix local_matrix = ToSkMatrix(matrix4);
   matrix4.Release();
@@ -50,33 +41,31 @@ Dart_Handle ImageShader::initWithImage(CanvasImage* image,
   DlImageSampling sampling =
       sampling_is_locked_ ? ImageFilter::SamplingFromIndex(filter_quality_index)
                           : DlImageSampling::kLinear;
-  cached_shader_ = UIDartState::CreateGPUObject(sk_make_sp<DlImageColorSource>(
-      sk_image_.skia_object(), ToDl(tmx), ToDl(tmy), sampling, &local_matrix));
+  cached_shader_ = std::make_shared<DlImageColorSource>(
+      image_, tmx, tmy, sampling, &local_matrix);
+  FML_DCHECK(cached_shader_->isUIThreadSafe());
   return Dart_Null();
 }
 
 std::shared_ptr<DlColorSource> ImageShader::shader(DlImageSampling sampling) {
-  if (sampling_is_locked_) {
-    return cached_shader_.skia_object()->with_sampling(
-        cached_shader_.skia_object()->sampling());
+  if (sampling_is_locked_ || sampling == cached_shader_->sampling()) {
+    return cached_shader_;
   }
-  // It might seem that if the sampling is locked we can just return the
-  // cached version, but since we need to hold the cached shader in a
-  // Skia GPU wrapper, and that wrapper requires an sk_sp<>, we are holding
-  // an sk_sp<> version of the shared object and we need a shared_ptr version.
-  // So, either way, we need the with_sampling() method to shared_ptr'ify
-  // our copy.
-  // If we can get rid of the need for the GPU unref queue, then this can all
-  // be simplified down to just a shared_ptr.
-  return cached_shader_.skia_object()->with_sampling(sampling);
+  return cached_shader_->with_sampling(sampling);
 }
 
 int ImageShader::width() {
-  return sk_image_.skia_object()->width();
+  return image_->width();
 }
 
 int ImageShader::height() {
-  return sk_image_.skia_object()->height();
+  return image_->height();
+}
+
+void ImageShader::dispose() {
+  cached_shader_.reset();
+  image_.reset();
+  ClearDartWrapper();
 }
 
 ImageShader::ImageShader() = default;

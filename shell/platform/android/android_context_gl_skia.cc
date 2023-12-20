@@ -70,8 +70,7 @@ AndroidContextGLSkia::AndroidContextGLSkia(
     const TaskRunners& task_runners,
     uint8_t msaa_samples)
     : AndroidContext(AndroidRenderingAPI::kOpenGLES),
-      environment_(environment),
-      config_(nullptr),
+      environment_(std::move(environment)),
       task_runners_(task_runners) {
   if (!environment_->IsValid()) {
     FML_LOG(ERROR) << "Could not create an Android GL environment.";
@@ -146,7 +145,7 @@ AndroidContextGLSkia::~AndroidContextGLSkia() {
 }
 
 std::unique_ptr<AndroidEGLSurface> AndroidContextGLSkia::CreateOnscreenSurface(
-    fml::RefPtr<AndroidNativeWindow> window) const {
+    const fml::RefPtr<AndroidNativeWindow>& window) const {
   if (window->IsFakeWindow()) {
     return CreatePbufferSurface();
   } else {
@@ -203,6 +202,14 @@ bool AndroidContextGLSkia::ClearCurrent() const {
     return false;
   }
   return true;
+}
+
+EGLContext AndroidContextGLSkia::GetEGLContext() const {
+  return context_;
+}
+
+EGLDisplay AndroidContextGLSkia::GetEGLDisplay() const {
+  return environment_->Display();
 }
 
 EGLContext AndroidContextGLSkia::CreateNewContext() const {

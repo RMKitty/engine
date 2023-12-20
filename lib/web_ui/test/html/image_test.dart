@@ -13,27 +13,16 @@ void main() {
   internalBootstrapBrowserTest(() => testMain);
 }
 
-typedef _ListPredicate<T> = bool Function(List<T>);
-_ListPredicate<T> deepEqualList<T>(List<T> a) {
-  return (List<T> b) {
-    if (a.length != b.length)
-      return false;
-    for (int i = 0; i < a.length; i += 1) {
-      if (a[i] != b[i])
-        return false;
-    }
-    return true;
-  };
-}
-
 Matcher listEqual(List<int> source, {int tolerance = 0}) {
   return predicate(
     (List<int> target) {
-      if (source.length != target.length)
+      if (source.length != target.length) {
         return false;
+      }
       for (int i = 0; i < source.length; i += 1) {
-        if ((source[i] - target[i]).abs() > tolerance)
+        if ((source[i] - target[i]).abs() > tolerance) {
           return false;
+        }
       }
       return true;
     },
@@ -46,14 +35,15 @@ Matcher listEqual(List<int> source, {int tolerance = 0}) {
 // Each element of `rawPixels` represents a bytes in order 0xRRGGBBAA, with
 // pixel order Left to right, then top to bottom.
 Uint8List _pixelsToBytes(List<int> rawPixels) {
-  return Uint8List.fromList((() sync* {
-    for (final int pixel in rawPixels) {
-      yield (pixel >> 24) & 0xff; // r
-      yield (pixel >> 16) & 0xff; // g
-      yield (pixel >> 8)  & 0xff; // b
-      yield (pixel >> 0)  & 0xff; // a
-    }
-  })().toList());
+  return Uint8List.fromList(<int>[
+    for (final int pixel in rawPixels)
+      ...<int>[
+        (pixel >> 24) & 0xff, // r
+        (pixel >> 16) & 0xff, // g
+        (pixel >> 8)  & 0xff, // b
+        (pixel >> 0)  & 0xff, // a
+      ]
+  ]);
 }
 
 Future<Image> _encodeToHtmlThenDecode(

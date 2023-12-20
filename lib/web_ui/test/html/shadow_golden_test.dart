@@ -9,7 +9,7 @@ import 'package:ui/ui.dart';
 
 import 'package:web_engine_tester/golden_tester.dart';
 
-import 'paragraph/text_scuba.dart';
+import '../common/test_initialization.dart';
 
 const Color _kShadowColor = Color.fromARGB(255, 0, 0, 0);
 
@@ -22,13 +22,16 @@ Future<void> testMain() async {
 
   late SurfaceSceneBuilder builder;
 
-  setUpStableTestFonts();
+  setUpUnitTests(
+    emulateTesterEnvironment: false,
+    setUpTestViewDimensions: false,
+  );
 
   setUp(() {
     builder = SurfaceSceneBuilder();
   });
 
-  void _paintShapeOutline() {
+  void paintShapeOutline() {
     final EnginePictureRecorder recorder = EnginePictureRecorder();
     final RecordingCanvas canvas = recorder.beginRecording(Rect.largest);
     canvas.drawRect(
@@ -41,7 +44,7 @@ Future<void> testMain() async {
     builder.addPicture(Offset.zero, recorder.endRecording());
   }
 
-  void _paintShadowBounds(SurfacePath path, double elevation) {
+  void paintShadowBounds(SurfacePath path, double elevation) {
     final Rect shadowBounds =
         computePenumbraBounds(path.getBounds(), elevation);
     final EnginePictureRecorder recorder = EnginePictureRecorder();
@@ -56,23 +59,7 @@ Future<void> testMain() async {
     builder.addPicture(Offset.zero, recorder.endRecording());
   }
 
-  void _paintPhysicalShapeShadow(double elevation, Offset offset) {
-    final SurfacePath path = SurfacePath()
-      ..addRect(const Rect.fromLTRB(0, 0, 20, 20));
-    builder.pushOffset(offset.dx, offset.dy);
-    builder.pushPhysicalShape(
-      path: path,
-      elevation: elevation,
-      shadowColor: _kShadowColor,
-      color: const Color.fromARGB(255, 255, 255, 255),
-    );
-    builder.pop(); // physical shape
-    _paintShapeOutline();
-    _paintShadowBounds(path, elevation);
-    builder.pop(); // offset
-  }
-
-  void _paintBitmapCanvasShadow(
+  void paintBitmapCanvasShadow(
       double elevation, Offset offset, bool transparentOccluder) {
     final SurfacePath path = SurfacePath()
       ..addRect(const Rect.fromLTRB(0, 0, 20, 20));
@@ -89,13 +76,13 @@ Future<void> testMain() async {
       transparentOccluder,
     );
     builder.addPicture(Offset.zero, recorder.endRecording());
-    _paintShapeOutline();
-    _paintShadowBounds(path, elevation);
+    paintShapeOutline();
+    paintShadowBounds(path, elevation);
 
     builder.pop(); // offset
   }
 
-  void _paintBitmapCanvasComplexPathShadow(double elevation, Offset offset) {
+  void paintBitmapCanvasComplexPathShadow(double elevation, Offset offset) {
     final SurfacePath path = SurfacePath()
       ..moveTo(10, 0)
       ..lineTo(20, 10)
@@ -122,7 +109,7 @@ Future<void> testMain() async {
         ..color = const Color.fromARGB(255, 0, 0, 255),
     );
     builder.addPicture(Offset.zero, recorder.endRecording());
-    _paintShadowBounds(path, elevation);
+    paintShadowBounds(path, elevation);
 
     builder.pop(); // offset
   }
@@ -136,19 +123,15 @@ Future<void> testMain() async {
       builder.pushOffset(10, 20);
 
       for (int i = 0; i < 10; i++) {
-        _paintPhysicalShapeShadow(i.toDouble(), Offset(50.0 * i, 0));
+        paintBitmapCanvasShadow(i.toDouble(), Offset(50.0 * i, 60), false);
       }
 
       for (int i = 0; i < 10; i++) {
-        _paintBitmapCanvasShadow(i.toDouble(), Offset(50.0 * i, 60), false);
+        paintBitmapCanvasShadow(i.toDouble(), Offset(50.0 * i, 120), true);
       }
 
       for (int i = 0; i < 10; i++) {
-        _paintBitmapCanvasShadow(i.toDouble(), Offset(50.0 * i, 120), true);
-      }
-
-      for (int i = 0; i < 10; i++) {
-        _paintBitmapCanvasComplexPathShadow(
+        paintBitmapCanvasComplexPathShadow(
             i.toDouble(), Offset(50.0 * i, 180));
       }
 
@@ -160,8 +143,6 @@ Future<void> testMain() async {
       await matchGoldenFile(
         'shadows.png',
         region: region,
-        maxDiffRatePercent: 0.23,
-        pixelComparison: PixelComparison.precise,
       );
     },
     testOn: 'chrome',

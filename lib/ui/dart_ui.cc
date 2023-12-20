@@ -4,6 +4,10 @@
 
 #include "flutter/lib/ui/dart_ui.h"
 
+#include <mutex>
+#include <string_view>
+
+#include "flutter/common/constants.h"
 #include "flutter/common/settings.h"
 #include "flutter/fml/build_config.h"
 #include "flutter/lib/ui/compositing/scene.h"
@@ -15,6 +19,7 @@
 #include "flutter/lib/ui/painting/color_filter.h"
 #include "flutter/lib/ui/painting/engine_layer.h"
 #include "flutter/lib/ui/painting/fragment_program.h"
+#include "flutter/lib/ui/painting/fragment_shader.h"
 #include "flutter/lib/ui/painting/gradient.h"
 #include "flutter/lib/ui/painting/image.h"
 #include "flutter/lib/ui/painting/image_descriptor.h"
@@ -37,6 +42,11 @@
 #include "third_party/tonic/dart_args.h"
 #include "third_party/tonic/logging/dart_error.h"
 
+#ifdef IMPELLER_ENABLE_3D
+#include "flutter/lib/ui/painting/scene/scene_node.h"
+#include "flutter/lib/ui/painting/scene/scene_shader.h"
+#endif  // IMPELLER_ENABLE_3D
+
 using tonic::ToDart;
 
 namespace flutter {
@@ -46,7 +56,7 @@ typedef CanvasPathMeasure PathMeasure;
 typedef CanvasGradient Gradient;
 typedef CanvasPath Path;
 
-// List of native static functions used as @FfiNative functions.
+// List of native static functions used as @Native functions.
 // Items are tuples of ('function_name', 'parameter_count'), where:
 //   'function_name' is the fully qualified name of the native function.
 //   'parameter_count' is the number of parameters the function has.
@@ -56,18 +66,19 @@ typedef CanvasPath Path;
 //   bindings.
 //   If the name does not match a native function, the template will fail to
 //   instatiate, resulting in a compile time error.
-// - Resolve the native function pointer associated with an @FfiNative function.
-//   If there is a mismatch between name or parameter count an @FfiNative is
+// - Resolve the native function pointer associated with an @Native function.
+//   If there is a mismatch between name or parameter count an @Native is
 //   trying to resolve, an exception will be thrown.
 #define FFI_FUNCTION_LIST(V)                                          \
   /* Constructors */                                                  \
   V(Canvas::Create, 6)                                                \
   V(ColorFilter::Create, 1)                                           \
   V(FragmentProgram::Create, 1)                                       \
+  V(ReusableFragmentShader::Create, 4)                                \
   V(Gradient::Create, 1)                                              \
   V(ImageFilter::Create, 1)                                           \
   V(ImageShader::Create, 1)                                           \
-  V(ParagraphBuilder::Create, 9)                                      \
+  V(ParagraphBuilder::Create, 10)                                     \
   V(PathMeasure::Create, 3)                                           \
   V(Path::Create, 1)                                                  \
   V(PictureRecorder::Create, 1)                                       \
@@ -78,6 +89,7 @@ typedef CanvasPath Path;
   V(ImageDescriptor::initEncoded, 3)                                  \
   V(ImmutableBuffer::init, 3)                                         \
   V(ImmutableBuffer::initFromAsset, 3)                                \
+  V(ImmutableBuffer::initFromFile, 3)                                 \
   V(ImageDescriptor::initRaw, 6)                                      \
   V(IsolateNameServerNatives::LookupPortByName, 1)                    \
   V(IsolateNameServerNatives::RegisterPortWithName, 2)                \
@@ -90,10 +102,16 @@ typedef CanvasPath Path;
   V(PlatformConfigurationNativeApi::UpdateSemantics, 1)               \
   V(PlatformConfigurationNativeApi::SetNeedsReportTimings, 1)         \
   V(PlatformConfigurationNativeApi::SetIsolateDebugName, 1)           \
+  V(PlatformConfigurationNativeApi::RequestDartPerformanceMode, 1)    \
   V(PlatformConfigurationNativeApi::GetPersistentIsolateData, 0)      \
   V(PlatformConfigurationNativeApi::ComputePlatformResolvedLocale, 1) \
   V(PlatformConfigurationNativeApi::SendPlatformMessage, 3)           \
   V(PlatformConfigurationNativeApi::RespondToPlatformMessage, 2)      \
+  V(PlatformConfigurationNativeApi::GetRootIsolateToken, 0)           \
+  V(PlatformConfigurationNativeApi::RegisterBackgroundIsolate, 1)     \
+  V(PlatformConfigurationNativeApi::SendPortPlatformMessage, 4)       \
+  V(PlatformConfigurationNativeApi::SendChannelUpdate, 2)             \
+  V(PlatformConfigurationNativeApi::GetScaledFontSize, 2)             \
   V(DartRuntimeHooks::Logger_PrintDebugString, 1)                     \
   V(DartRuntimeHooks::Logger_PrintString, 1)                          \
   V(DartRuntimeHooks::ScheduleMicrotask, 1)                           \
@@ -102,7 +120,7 @@ typedef CanvasPath Path;
   V(DartPluginRegistrant_EnsureInitialized, 0)                        \
   V(Vertices::init, 6)
 
-// List of native instance methods used as @FfiNative functions.
+// List of native instance methods used as @Native functions.
 // Items are tuples of ('class_name', 'method_name', 'parameter_count'), where:
 //   'class_name' is the name of the class containing the method.
 //   'method_name' is the name of the method.
@@ -114,8 +132,8 @@ typedef CanvasPath Path;
 //   bindings.
 //   If the name does not match a native function, the template will fail to
 //   instatiate, resulting in a compile time error.
-// - Resolve the native function pointer associated with an @FfiNative function.
-//   If there is a mismatch between names or parameter count an @FfiNative is
+// - Resolve the native function pointer associated with an @Native function.
+//   If there is a mismatch between names or parameter count an @Native is
 //   trying to resolve, an exception will be thrown.
 #define FFI_METHOD_LIST(V)                             \
   V(Canvas, clipPath, 3)                               \
@@ -144,6 +162,7 @@ typedef CanvasPath Path;
   V(Canvas, getSaveCount, 1)                           \
   V(Canvas, getTransform, 2)                           \
   V(Canvas, restore, 1)                                \
+  V(Canvas, restoreToCount, 2)                         \
   V(Canvas, rotate, 2)                                 \
   V(Canvas, save, 1)                                   \
   V(Canvas, saveLayer, 7)                              \
@@ -161,8 +180,10 @@ typedef CanvasPath Path;
   V(ColorFilter, initMode, 3)                          \
   V(ColorFilter, initSrgbToLinearGamma, 1)             \
   V(EngineLayer, dispose, 1)                           \
-  V(FragmentProgram, init, 3)                          \
-  V(FragmentProgram, shader, 4)                        \
+  V(FragmentProgram, initFromAsset, 2)                 \
+  V(ReusableFragmentShader, Dispose, 1)                \
+  V(ReusableFragmentShader, SetImageSampler, 3)        \
+  V(ReusableFragmentShader, ValidateSamplers, 1)       \
   V(Gradient, initLinear, 6)                           \
   V(Gradient, initRadial, 8)                           \
   V(Gradient, initSweep, 9)                            \
@@ -171,6 +192,7 @@ typedef CanvasPath Path;
   V(Image, width, 1)                                   \
   V(Image, height, 1)                                  \
   V(Image, toByteData, 3)                              \
+  V(Image, colorSpace, 1)                              \
   V(ImageDescriptor, bytesPerPixel, 1)                 \
   V(ImageDescriptor, dispose, 1)                       \
   V(ImageDescriptor, height, 1)                        \
@@ -182,6 +204,7 @@ typedef CanvasPath Path;
   V(ImageFilter, initColorFilter, 2)                   \
   V(ImageFilter, initComposeFilter, 3)                 \
   V(ImageFilter, initMatrix, 3)                        \
+  V(ImageShader, dispose, 1)                           \
   V(ImageShader, initWithImage, 6)                     \
   V(ImmutableBuffer, dispose, 1)                       \
   V(ImmutableBuffer, length, 1)                        \
@@ -193,7 +216,13 @@ typedef CanvasPath Path;
   V(Paragraph, alphabeticBaseline, 1)                  \
   V(Paragraph, computeLineMetrics, 1)                  \
   V(Paragraph, didExceedMaxLines, 1)                   \
+  V(Paragraph, dispose, 1)                             \
+  V(Paragraph, getClosestGlyphInfo, 3)                 \
+  V(Paragraph, getGlyphInfoAt, 2)                      \
   V(Paragraph, getLineBoundary, 2)                     \
+  V(Paragraph, getLineMetricsAt, 3)                    \
+  V(Paragraph, getLineNumberAt, 2)                     \
+  V(Paragraph, getNumberOfLines, 1)                    \
   V(Paragraph, getPositionForOffset, 3)                \
   V(Paragraph, getRectsForPlaceholders, 1)             \
   V(Paragraph, getRectsForRange, 5)                    \
@@ -264,7 +293,6 @@ typedef CanvasPath Path;
   V(SceneBuilder, pushImageFilter, 4)                  \
   V(SceneBuilder, pushOffset, 5)                       \
   V(SceneBuilder, pushOpacity, 6)                      \
-  V(SceneBuilder, pushPhysicalShape, 8)                \
   V(SceneBuilder, pushShaderMask, 10)                  \
   V(SceneBuilder, pushTransformHandle, 4)              \
   V(SceneBuilder, setCheckerboardOffscreenLayers, 2)   \
@@ -276,28 +304,64 @@ typedef CanvasPath Path;
   V(SemanticsUpdateBuilder, build, 2)                  \
   V(SemanticsUpdateBuilder, updateCustomAction, 5)     \
   V(SemanticsUpdateBuilder, updateNode, 36)            \
-  V(SemanticsUpdate, dispose, 1)
+  V(SemanticsUpdate, dispose, 1)                       \
+  V(Vertices, dispose, 1)
 
-#define FFI_FUNCTION_MATCH(FUNCTION, ARGS)                                 \
-  if (strcmp(name, #FUNCTION) == 0 && args == ARGS) {                      \
-    return reinterpret_cast<void*>(                                        \
-        tonic::FfiDispatcher<void, decltype(&FUNCTION), &FUNCTION>::Call); \
-  }
+#ifdef IMPELLER_ENABLE_3D
 
-#define FFI_METHOD_MATCH(CLASS, METHOD, ARGS)                   \
-  if (strcmp(name, #CLASS "::" #METHOD) == 0 && args == ARGS) { \
-    return reinterpret_cast<void*>(                             \
-        tonic::FfiDispatcher<CLASS, decltype(&CLASS::METHOD),   \
-                             &CLASS::METHOD>::Call);            \
-  }
+#define FFI_FUNCTION_LIST_3D(V) \
+  V(SceneNode::Create, 1) V(SceneShader::Create, 2)
+
+#define FFI_METHOD_LIST_3D(V)           \
+  V(SceneNode, initFromAsset, 3)        \
+  V(SceneNode, initFromTransform, 2)    \
+  V(SceneNode, AddChild, 2)             \
+  V(SceneNode, SetTransform, 2)         \
+  V(SceneNode, SetAnimationState, 5)    \
+  V(SceneNode, SeekAnimation, 3)        \
+  V(SceneShader, SetCameraTransform, 2) \
+  V(SceneShader, Dispose, 1)
+
+#endif  // IMPELLER_ENABLE_3D
+
+#define FFI_FUNCTION_INSERT(FUNCTION, ARGS)     \
+  g_function_dispatchers.insert(std::make_pair( \
+      std::string_view(#FUNCTION),              \
+      reinterpret_cast<void*>(                  \
+          tonic::FfiDispatcher<void, decltype(&FUNCTION), &FUNCTION>::Call)));
+
+#define FFI_METHOD_INSERT(CLASS, METHOD, ARGS)                                 \
+  g_function_dispatchers.insert(                                               \
+      std::make_pair(std::string_view(#CLASS "::" #METHOD),                    \
+                     reinterpret_cast<void*>(                                  \
+                         tonic::FfiDispatcher<CLASS, decltype(&CLASS::METHOD), \
+                                              &CLASS::METHOD>::Call)));
+
+namespace {
+
+std::once_flag g_dispatchers_init_flag;
+std::unordered_map<std::string_view, void*> g_function_dispatchers;
 
 void* ResolveFfiNativeFunction(const char* name, uintptr_t args) {
-  FFI_FUNCTION_LIST(FFI_FUNCTION_MATCH)
-  FFI_METHOD_LIST(FFI_METHOD_MATCH)
-  return nullptr;
+  auto it = g_function_dispatchers.find(name);
+  return (it != g_function_dispatchers.end()) ? it->second : nullptr;
 }
 
+void InitDispatcherMap() {
+  FFI_FUNCTION_LIST(FFI_FUNCTION_INSERT)
+  FFI_METHOD_LIST(FFI_METHOD_INSERT)
+
+#ifdef IMPELLER_ENABLE_3D
+  FFI_FUNCTION_LIST_3D(FFI_FUNCTION_INSERT)
+  FFI_METHOD_LIST_3D(FFI_METHOD_INSERT)
+#endif  // IMPELLER_ENABLE_3D
+}
+
+}  // anonymous namespace
+
 void DartUI::InitForIsolate(const Settings& settings) {
+  std::call_once(g_dispatchers_init_flag, InitDispatcherMap);
+
   auto dart_ui = Dart_LookupLibrary(ToDart("dart:ui"));
   if (Dart_IsError(dart_ui)) {
     Dart_PropagateError(dart_ui);
@@ -315,6 +379,12 @@ void DartUI::InitForIsolate(const Settings& settings) {
     if (Dart_IsError(result)) {
       Dart_PropagateError(result);
     }
+  }
+
+  result = Dart_SetField(dart_ui, ToDart("_implicitViewId"),
+                         Dart_NewInteger(kFlutterImplicitViewId));
+  if (Dart_IsError(result)) {
+    Dart_PropagateError(result);
   }
 }
 

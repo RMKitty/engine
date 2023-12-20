@@ -6,6 +6,25 @@
 
 namespace impeller {
 
-//
+SamplerVK::SamplerVK(SamplerDescriptor desc, vk::UniqueSampler sampler)
+    : Sampler(std::move(desc)),
+      sampler_(MakeSharedVK<vk::Sampler>(std::move(sampler))) {
+  is_valid_ = true;
+}
+
+SamplerVK::~SamplerVK() = default;
+
+vk::Sampler SamplerVK::GetSampler() const {
+  return *sampler_;
+}
+
+const std::shared_ptr<SharedObjectVKT<vk::Sampler>>&
+SamplerVK::GetSharedSampler() const {
+  return sampler_;
+}
+
+bool SamplerVK::IsValid() const {
+  return is_valid_;
+}
 
 }  // namespace impeller

@@ -2,13 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef FLUTTER_IMPELLER_RENDERER_BACKEND_VULKAN_RENDER_PASS_VK_H_
+#define FLUTTER_IMPELLER_RENDERER_BACKEND_VULKAN_RENDER_PASS_VK_H_
 
 #include "flutter/fml/macros.h"
+#include "impeller/renderer/backend/vulkan/context_vk.h"
+#include "impeller/renderer/backend/vulkan/pass_bindings_cache.h"
+#include "impeller/renderer/backend/vulkan/shared_object_vk.h"
 #include "impeller/renderer/render_pass.h"
 #include "impeller/renderer/render_target.h"
 
 namespace impeller {
+
+class CommandBufferVK;
 
 class RenderPassVK final : public RenderPass {
  public:
@@ -18,7 +24,14 @@ class RenderPassVK final : public RenderPass {
  private:
   friend class CommandBufferVK;
 
-  RenderPassVK(RenderTarget target);
+  std::weak_ptr<CommandBufferVK> command_buffer_;
+  std::string debug_label_;
+  bool is_valid_ = false;
+  mutable PassBindingsCache pass_bindings_cache_;
+
+  RenderPassVK(const std::shared_ptr<const Context>& context,
+               const RenderTarget& target,
+               std::weak_ptr<CommandBufferVK> command_buffer);
 
   // |RenderPass|
   bool IsValid() const override;
@@ -27,10 +40,22 @@ class RenderPassVK final : public RenderPass {
   void OnSetLabel(std::string label) override;
 
   // |RenderPass|
-  bool EncodeCommands(
-      const std::shared_ptr<Allocator>& transients_allocator) const override;
+  bool OnEncodeCommands(const Context& context) const override;
 
-  FML_DISALLOW_COPY_AND_ASSIGN(RenderPassVK);
+  SharedHandleVK<vk::RenderPass> CreateVKRenderPass(
+      const ContextVK& context,
+      const std::shared_ptr<CommandBufferVK>& command_buffer,
+      bool has_subpass_dependency) const;
+
+  SharedHandleVK<vk::Framebuffer> CreateVKFramebuffer(
+      const ContextVK& context,
+      const vk::RenderPass& pass) const;
+
+  RenderPassVK(const RenderPassVK&) = delete;
+
+  RenderPassVK& operator=(const RenderPassVK&) = delete;
 };
 
 }  // namespace impeller
+
+#endif  // FLUTTER_IMPELLER_RENDERER_BACKEND_VULKAN_RENDER_PASS_VK_H_

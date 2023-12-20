@@ -16,6 +16,9 @@ bool get _workAroundBug91333 => operatingSystem == OperatingSystem.iOs;
 enum BrowserEngine {
   /// The engine that powers Chrome, Samsung Internet Browser, UC Browser,
   /// Microsoft Edge, Opera, and others.
+  ///
+  /// Blink is assumed in case when a more precise browser engine wasn't
+  /// detected.
   blink,
 
   /// The engine that powers Safari.
@@ -23,18 +26,6 @@ enum BrowserEngine {
 
   /// The engine that powers Firefox.
   firefox,
-
-  /// The engine that powers Edge.
-  edge,
-
-  /// The engine that powers Internet Explorer 11.
-  ie11,
-
-  /// The engine that powers Samsung stock browser. It is based on blink.
-  samsung,
-
-  /// We were unable to detect the current browser engine.
-  unknown,
 }
 
 /// html webgl version qualifier constants.
@@ -47,7 +38,7 @@ abstract class WebGLVersion {
 }
 
 /// Lazily initialized current browser engine.
-late final BrowserEngine _browserEngine = _detectBrowserEngine();
+final BrowserEngine _browserEngine = _detectBrowserEngine();
 
 /// Override the value of [browserEngine].
 ///
@@ -70,51 +61,29 @@ BrowserEngine _detectBrowserEngine() {
   return detectBrowserEngineByVendorAgent(vendor, agent);
 }
 
-/// Detects samsung blink variants.
-///
-///  Example patterns:
-///    Note 2 : GT-N7100
-///    Note 3 : SM-N900T
-///    Tab 4 : SM-T330NU
-///    Galaxy S4: SHV-E330S
-///    Galaxy Note2: SHV-E250L
-///    Note: SAMSUNG-SGH-I717
-///    SPH/SCH are very old Palm models.
-bool _isSamsungBrowser(String agent) {
-  final RegExp exp = RegExp(
-      r'SAMSUNG|SGH-[I|N|T]|GT-[I|N]|SM-[A|N|P|T|Z]|SHV-E|SCH-[I|J|R|S]|SPH-L');
-  return exp.hasMatch(agent.toUpperCase());
-}
-
 /// Detects browser engine for a given vendor and agent string.
 ///
 /// Used for testing this library.
 @visibleForTesting
 BrowserEngine detectBrowserEngineByVendorAgent(String vendor, String agent) {
   if (vendor == 'Google Inc.') {
-    // Samsung browser is based on blink, check for variant.
-    if (_isSamsungBrowser(agent)) {
-      return BrowserEngine.samsung;
-    }
     return BrowserEngine.blink;
   } else if (vendor == 'Apple Computer, Inc.') {
     return BrowserEngine.webkit;
-  } else if (agent.contains('edge/')) {
-    return BrowserEngine.edge;
   } else if (agent.contains('Edg/')) {
     // Chromium based Microsoft Edge has `Edg` in the user-agent.
     // https://docs.microsoft.com/en-us/microsoft-edge/web-platform/user-agent-string
     return BrowserEngine.blink;
-  } else if (agent.contains('trident/7.0')) {
-    return BrowserEngine.ie11;
   } else if (vendor == '' && agent.contains('firefox')) {
     // An empty string means firefox:
     // https://developer.mozilla.org/en-US/docs/Web/API/Navigator/vendor
     return BrowserEngine.firefox;
   }
-  // Assume unknown otherwise, but issue a warning.
-  print('WARNING: failed to detect current browser engine.');
-  return BrowserEngine.unknown;
+
+  // Assume Blink otherwise, but issue a warning.
+  print(
+      'WARNING: failed to detect current browser engine. Assuming this is a Chromium-compatible browser.');
+  return BrowserEngine.blink;
 }
 
 /// Operating system where the current browser runs.
@@ -142,7 +111,7 @@ enum OperatingSystem {
 }
 
 /// Lazily initialized current operating system.
-late final OperatingSystem _operatingSystem = detectOperatingSystem();
+final OperatingSystem _operatingSystem = detectOperatingSystem();
 
 /// Returns the [OperatingSystem] the current browsers works on.
 ///
@@ -173,8 +142,9 @@ OperatingSystem detectOperatingSystem({
   if (platform.startsWith('Mac')) {
     // iDevices requesting a "desktop site" spoof their UA so it looks like a Mac.
     // This checks if we're in a touch device, or on a real mac.
-    final int maxTouchPoints =
-        overrideMaxTouchPoints ?? domWindow.navigator.maxTouchPoints ?? 0;
+    final int maxTouchPoints = overrideMaxTouchPoints ??
+        domWindow.navigator.maxTouchPoints?.toInt() ??
+        0;
     if (maxTouchPoints > 2) {
       return OperatingSystem.iOs;
     }
@@ -236,8 +206,44 @@ bool get isIOS15 {
       domWindow.navigator.userAgent.contains('OS 15_');
 }
 
+/// Detect if running on Chrome version 110 or older.
+///
+/// These versions of Chrome have a bug which causes rendering to be flipped
+/// upside down when using `createImageBitmap`: see
+/// https://chromium.googlesource.com/chromium/src/+/a7f9b00e422a1755918f8ca5500380f98b6fddf2
+// TODO(harryterkelsen): Remove this check once we stop supporting Chrome 110
+// and earlier, https://github.com/flutter/flutter/issues/139186.
+bool get isChrome110OrOlder {
+  if (debugIsChrome110OrOlder != null) {
+    return debugIsChrome110OrOlder!;
+  }
+  if (_cachedIsChrome110OrOlder != null) {
+    return _cachedIsChrome110OrOlder!;
+  }
+  final RegExp chromeRegexp = RegExp(r'Chrom(e|ium)\/([0-9]+)\.');
+  final RegExpMatch? match =
+      chromeRegexp.firstMatch(domWindow.navigator.userAgent);
+  if (match != null) {
+    final int chromeVersion = int.parse(match.group(2)!);
+    return _cachedIsChrome110OrOlder = chromeVersion <= 110;
+  }
+  return _cachedIsChrome110OrOlder = false;
+}
+
+// Cache the result of checking if the app is running on Chrome 110 on Windows
+// since we check this on every frame.
+bool? _cachedIsChrome110OrOlder;
+
+/// If set to true pretends that the current browser is iOS Safari.
+///
+/// Useful for tests. Do not use in production code.
+@visibleForTesting
+bool debugEmulateIosSafari = false;
+
 /// Returns true if the browser is iOS Safari, false otherwise.
-bool get isIosSafari =>
+bool get isIosSafari => debugEmulateIosSafari || _isActualIosSafari;
+
+bool get _isActualIosSafari =>
     browserEngine == BrowserEngine.webkit &&
     operatingSystem == OperatingSystem.iOs;
 
@@ -247,8 +253,19 @@ bool get isSafari => browserEngine == BrowserEngine.webkit;
 /// Whether the current browser is Firefox.
 bool get isFirefox => browserEngine == BrowserEngine.firefox;
 
+/// Whether the current browser is Edge.
+bool get isEdge => domWindow.navigator.userAgent.contains('Edg/');
+
+/// Whether we are running from a wasm module compiled with dart2wasm.
+/// Note: Currently the ffi library is available from dart2wasm but not dart2js
+/// or dartdevc.
+bool get isWasm => const bool.fromEnvironment('dart.library.ffi');
+
 /// Use in tests to simulate the detection of iOS 15.
 bool? debugIsIOS15;
+
+/// Use in tests to simulated the detection of Chrome 110 or older on Windows.
+bool? debugIsChrome110OrOlder;
 
 int? _cachedWebGLVersion;
 
@@ -282,3 +299,7 @@ int _detectWebGLVersion() {
   }
   return -1;
 }
+
+/// Whether the current browser supports the Chromium variant of CanvasKit.
+bool get browserSupportsCanvaskitChromium =>
+    domIntl.v8BreakIterator != null && domIntl.Segmenter != null;

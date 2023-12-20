@@ -13,6 +13,7 @@
 #include "impeller/playground/imgui/gles/imgui_shaders_gles.h"
 #include "impeller/renderer/backend/gles/context_gles.h"
 #include "impeller/renderer/backend/gles/surface_gles.h"
+#include "impeller/scene/shaders/gles/scene_shaders_gles.h"
 
 namespace impeller {
 
@@ -40,7 +41,9 @@ class PlaygroundImplGLES::ReactorWorker final : public ReactorGLES::Worker {
   mutable RWMutex mutex_;
   std::map<std::thread::id, bool> reactions_allowed_ IPLR_GUARDED_BY(mutex_);
 
-  FML_DISALLOW_COPY_AND_ASSIGN(ReactorWorker);
+  ReactorWorker(const ReactorWorker&) = delete;
+
+  ReactorWorker& operator=(const ReactorWorker&) = delete;
 };
 
 void PlaygroundImplGLES::DestroyWindowHandle(WindowHandle handle) {
@@ -50,8 +53,9 @@ void PlaygroundImplGLES::DestroyWindowHandle(WindowHandle handle) {
   ::glfwDestroyWindow(reinterpret_cast<GLFWwindow*>(handle));
 }
 
-PlaygroundImplGLES::PlaygroundImplGLES()
-    : handle_(nullptr, &DestroyWindowHandle),
+PlaygroundImplGLES::PlaygroundImplGLES(PlaygroundSwitches switches)
+    : PlaygroundImpl(switches),
+      handle_(nullptr, &DestroyWindowHandle),
       worker_(std::shared_ptr<ReactorWorker>(new ReactorWorker())) {
   ::glfwDefaultWindowHints();
 
@@ -67,7 +71,7 @@ PlaygroundImplGLES::PlaygroundImplGLES()
   ::glfwWindowHint(GLFW_GREEN_BITS, 8);
   ::glfwWindowHint(GLFW_BLUE_BITS, 8);
   ::glfwWindowHint(GLFW_ALPHA_BITS, 8);
-  ::glfwWindowHint(GLFW_DEPTH_BITS, 0);    // no depth buffer
+  ::glfwWindowHint(GLFW_DEPTH_BITS, 32);   // 32 bit depth buffer
   ::glfwWindowHint(GLFW_STENCIL_BITS, 8);  // 8 bit stencil buffer
   ::glfwWindowHint(GLFW_SAMPLES, 4);       // 4xMSAA
 
@@ -94,6 +98,8 @@ ShaderLibraryMappingsForPlayground() {
           impeller_fixtures_shaders_gles_length),
       std::make_shared<fml::NonOwnedMapping>(
           impeller_imgui_shaders_gles_data, impeller_imgui_shaders_gles_length),
+      std::make_shared<fml::NonOwnedMapping>(
+          impeller_scene_shaders_gles_data, impeller_scene_shaders_gles_length),
   };
 }
 
@@ -108,8 +114,8 @@ std::shared_ptr<Context> PlaygroundImplGLES::GetContext() const {
     return nullptr;
   }
 
-  auto context =
-      ContextGLES::Create(std::move(gl), ShaderLibraryMappingsForPlayground());
+  auto context = ContextGLES::Create(
+      std::move(gl), ShaderLibraryMappingsForPlayground(), true);
   if (!context) {
     FML_LOG(ERROR) << "Could not create context.";
     return nullptr;
@@ -142,12 +148,19 @@ std::unique_ptr<Surface> PlaygroundImplGLES::AcquireSurfaceFrame(
     ::glfwSwapBuffers(window);
     return true;
   };
-  return SurfaceGLES::WrapFBO(std::move(context),              //
+  return SurfaceGLES::WrapFBO(context,                         //
                               swap_callback,                   //
                               0u,                              //
                               PixelFormat::kR8G8B8A8UNormInt,  //
                               ISize::MakeWH(width, height)     //
   );
+}
+
+fml::Status PlaygroundImplGLES::SetCapabilities(
+    const std::shared_ptr<Capabilities>& capabilities) {
+  return fml::Status(
+      fml::StatusCode::kUnimplemented,
+      "PlaygroundImplGLES doesn't support setting the capabilities.");
 }
 
 }  // namespace impeller

@@ -2,20 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef FLUTTER_IMPELLER_ENTITY_CONTENTS_FILTERS_FILTER_CONTENTS_H_
+#define FLUTTER_IMPELLER_ENTITY_CONTENTS_FILTERS_FILTER_CONTENTS_H_
 
 #include <memory>
 #include <optional>
 #include <variant>
 #include <vector>
 
+#include "impeller/core/formats.h"
 #include "impeller/entity/contents/filters/inputs/filter_input.h"
 #include "impeller/entity/entity.h"
-#include "impeller/renderer/formats.h"
+#include "impeller/geometry/matrix.h"
+#include "impeller/geometry/sigma.h"
 
 namespace impeller {
-
-class Pipeline;
 
 class FilterContents : public Contents {
  public:
@@ -30,80 +31,58 @@ class FilterContents : public Contents {
     kInner,
   };
 
-  /// For filters that use a Gaussian distribution, this is the `Radius` size to
-  /// use per `Sigma` (standard deviation).
-  ///
-  /// This cutoff (sqrt(3)) is taken from Flutter and Skia (where the
-  /// multiplicative inverse of this constant is used (1 / sqrt(3)):
-  /// https://api.flutter.dev/flutter/dart-ui/Shadow/convertRadiusToSigma.html
-  ///
-  /// In practice, this value is somewhat arbitrary, and can be changed to a
-  /// higher number to integrate more of the Gaussian function and render higher
-  /// quality blurs (with exponentially diminishing returns for the same sigma
-  /// input). Making this value any lower results in a noticable loss of
-  /// quality in the blur.
-  constexpr static float kKernelRadiusPerSigma = 1.73205080757;
+  enum class MorphType { kDilate, kErode };
 
-  struct Radius;
-
-  /// @brief  In filters that use Gaussian distributions, "sigma" is a size of
-  ///         one standard deviation in terms of the local space pixel grid of
-  ///         the filter input. In other words, this determines how wide the
-  ///         distribution stretches.
-  struct Sigma {
-    Scalar sigma = 0.0;
-
-    constexpr Sigma() = default;
-
-    explicit constexpr Sigma(Scalar p_sigma) : sigma(p_sigma) {}
-
-    constexpr operator Radius() const {
-      return Radius{sigma > 0.5f ? (sigma - 0.5f) * kKernelRadiusPerSigma
-                                 : 0.0f};
-    };
-  };
-
-  /// @brief  For convolution filters, the "radius" is the size of the
-  ///         convolution kernel to use on the local space pixel grid of the
-  ///         filter input.
-  ///         For Gaussian blur kernels, this unit has a linear
-  ///         relationship with `Sigma`. See `kKernelRadiusPerSigma` for
-  ///         details on how this relationship works.
-  struct Radius {
-    Scalar radius = 0.0;
-
-    constexpr Radius() = default;
-
-    explicit constexpr Radius(Scalar p_radius) : radius(p_radius) {}
-
-    constexpr operator Sigma() const {
-      return Sigma{radius > 0 ? radius / kKernelRadiusPerSigma + 0.5f : 0.0f};
-    };
-  };
-
-  static std::shared_ptr<FilterContents> MakeBlend(
-      Entity::BlendMode blend_mode,
-      FilterInput::Vector inputs,
-      std::optional<Color> foreground_color = std::nullopt);
-
+  /// Creates a gaussian blur that operates in one direction.
+  /// See also: `MakeGaussianBlur`
   static std::shared_ptr<FilterContents> MakeDirectionalGaussianBlur(
       FilterInput::Ref input,
       Sigma sigma,
       Vector2 direction,
       BlurStyle blur_style = BlurStyle::kNormal,
-      FilterInput::Ref alpha_mask = nullptr);
+      Entity::TileMode tile_mode = Entity::TileMode::kDecal,
+      bool is_second_pass = false,
+      Sigma secondary_sigma = {});
 
+  /// Creates a gaussian blur that operates in 2 dimensions.
+  /// See also: `MakeDirectionalGaussianBlur`
   static std::shared_ptr<FilterContents> MakeGaussianBlur(
-      FilterInput::Ref input,
+      const FilterInput::Ref& input,
       Sigma sigma_x,
       Sigma sigma_y,
-      BlurStyle blur_style = BlurStyle::kNormal);
+      BlurStyle blur_style = BlurStyle::kNormal,
+      Entity::TileMode tile_mode = Entity::TileMode::kDecal);
 
   static std::shared_ptr<FilterContents> MakeBorderMaskBlur(
       FilterInput::Ref input,
       Sigma sigma_x,
       Sigma sigma_y,
       BlurStyle blur_style = BlurStyle::kNormal);
+
+  static std::shared_ptr<FilterContents> MakeDirectionalMorphology(
+      FilterInput::Ref input,
+      Radius radius,
+      Vector2 direction,
+      MorphType morph_type);
+
+  static std::shared_ptr<FilterContents> MakeMorphology(FilterInput::Ref input,
+                                                        Radius radius_x,
+                                                        Radius radius_y,
+                                                        MorphType morph_type);
+
+  static std::shared_ptr<FilterContents> MakeMatrixFilter(
+      FilterInput::Ref input,
+      const Matrix& matrix,
+      const SamplerDescriptor& desc);
+
+  static std::shared_ptr<FilterContents> MakeLocalMatrixFilter(
+      FilterInput::Ref input,
+      const Matrix& matrix);
+
+  static std::shared_ptr<FilterContents> MakeYUVToRGBFilter(
+      std::shared_ptr<Texture> y_texture,
+      std::shared_ptr<Texture> uv_texture,
+      YUVColorSpace yuv_color_space);
 
   FilterContents();
 
@@ -116,8 +95,19 @@ class FilterContents : public Contents {
   ///         particular filter's implementation.
   void SetInputs(FilterInput::Vector inputs);
 
-  /// @brief  Screen space bounds to use for cropping the filter output.
-  void SetCoverageCrop(std::optional<Rect> coverage_crop);
+  /// @brief  Sets the transform which gets appended to the effect of this
+  ///         filter. Note that this is in addition to the entity's transform.
+  ///
+  ///         This is useful for subpass rendering scenarios where it's
+  ///         difficult to encode the current transform of the layer into the
+  ///         Entity being rendered.
+  void SetEffectTransform(const Matrix& effect_transform);
+
+  /// @brief  Create an Entity that renders this filter's output.
+  std::optional<Entity> GetEntity(
+      const ContentContext& renderer,
+      const Entity& entity,
+      const std::optional<Rect>& coverage_hint) const;
 
   // |Contents|
   bool Render(const ContentContext& renderer,
@@ -128,32 +118,127 @@ class FilterContents : public Contents {
   std::optional<Rect> GetCoverage(const Entity& entity) const override;
 
   // |Contents|
-  std::optional<Snapshot> RenderToSnapshot(const ContentContext& renderer,
-                                           const Entity& entity) const override;
+  void PopulateGlyphAtlas(
+      const std::shared_ptr<LazyGlyphAtlas>& lazy_glyph_atlas,
+      Scalar scale) override;
 
-  virtual Matrix GetLocalTransform() const;
+  // |Contents|
+  std::optional<Snapshot> RenderToSnapshot(
+      const ContentContext& renderer,
+      const Entity& entity,
+      std::optional<Rect> coverage_limit = std::nullopt,
+      const std::optional<SamplerDescriptor>& sampler_descriptor = std::nullopt,
+      bool msaa_enabled = true,
+      const std::string& label = "Filter Snapshot") const override;
+
+  // |Contents|
+  const FilterContents* AsFilter() const override;
+
+  /// @brief  Determines the coverage of source pixels that will be needed
+  ///         to produce results for the specified |output_limit| under the
+  ///         specified |effect_transform|. This is essentially a reverse of
+  ///         the |GetCoverage| method computing a source coverage from
+  ///         an intended |output_limit| coverage.
+  ///
+  ///         Both the |output_limit| and the return value are in the
+  ///         transformed coordinate space, and so do not need to be
+  ///         transformed or inverse transformed by the |effect_transform|
+  ///         but individual parameters on the filter might be in the
+  ///         untransformed space and should be transformed by the
+  ///         |effect_transform| before applying them to the coverages.
+  ///
+  ///         The method computes a result such that if the filter is applied
+  ///         to a set of pixels filling the computed source coverage, it
+  ///         should produce an output that covers the entire specified
+  ///         |output_limit|.
+  ///
+  ///         This is useful for subpass rendering scenarios where a filter
+  ///         will be applied to the output of the subpass and we need to
+  ///         determine how large of a render target to allocate in order
+  ///         to collect all pixels that might affect the supplied output
+  ///         coverage limit. While we might end up clipping the rendering
+  ///         of the subpass to its destination, we want to avoid clipping
+  ///         out any pixels that contribute to the output limit via the
+  ///         filtering operation.
+  ///
+  /// @return The coverage bounds in the transformed space of any source pixel
+  ///         that may be needed to produce output for the indicated filter
+  ///         that covers the indicated |output_limit|.
+  std::optional<Rect> GetSourceCoverage(const Matrix& effect_transform,
+                                        const Rect& output_limit) const;
+
+  virtual Matrix GetLocalTransform(const Matrix& parent_transform) const;
 
   Matrix GetTransform(const Matrix& parent_transform) const;
 
+  /// @brief  Returns true if this filter graph doesn't perform any basis
+  ///         transforms to the filtered content. For example: Rotating,
+  ///         scaling, and skewing are all basis transforms, but
+  ///         translating is not.
+  ///
+  ///         This is useful for determining whether a filtered object's space
+  ///         is compatible enough with the parent pass space to perform certain
+  ///         subpass clipping optimizations.
+  virtual bool IsTranslationOnly() const;
+
+  /// @brief  Returns `true` if this filter does not have any `FilterInput`
+  ///         children.
+  bool IsLeaf() const;
+
+  /// @brief  Replaces the set of all leaf `FilterContents` with a new set
+  ///         of `FilterInput`s.
+  /// @see    `FilterContents::IsLeaf`
+  void SetLeafInputs(const FilterInput::Vector& inputs);
+
+  /// @brief  Marks this filter chain as applying in a subpass scenario.
+  ///
+  ///         Subpasses render in screenspace, and this setting informs filters
+  ///         that the current transform matrix of the entity is not stored
+  ///         in the Entity transform matrix. Instead, the effect transform
+  ///         is used in this case.
+  virtual void SetRenderingMode(Entity::RenderingMode rendering_mode);
+
  private:
+  /// @brief  Internal utility method for |GetLocalCoverage| that computes
+  ///         the output coverage of this filter across the specified inputs,
+  ///         ignoring the coverage hint.
   virtual std::optional<Rect> GetFilterCoverage(
       const FilterInput::Vector& inputs,
-      const Entity& entity) const;
+      const Entity& entity,
+      const Matrix& effect_transform) const;
 
-  /// @brief  Takes a set of zero or more input textures and writes to an output
-  ///         texture.
-  virtual bool RenderFilter(const FilterInput::Vector& inputs,
-                            const ContentContext& renderer,
-                            const Entity& entity,
-                            RenderPass& pass,
-                            const Rect& coverage) const = 0;
+  /// @brief  Internal utility method for |GetSourceCoverage| that computes
+  ///         the inverse effect of this transform on the specified output
+  ///         coverage, ignoring the inputs which will be accommodated by
+  ///         the caller.
+  virtual std::optional<Rect> GetFilterSourceCoverage(
+      const Matrix& effect_transform,
+      const Rect& output_limit) const = 0;
 
+  /// @brief  Converts zero or more filter inputs into a render instruction.
+  virtual std::optional<Entity> RenderFilter(
+      const FilterInput::Vector& inputs,
+      const ContentContext& renderer,
+      const Entity& entity,
+      const Matrix& effect_transform,
+      const Rect& coverage,
+      const std::optional<Rect>& coverage_hint) const = 0;
+
+  /// @brief  Internal utility method to compute the coverage of this
+  ///         filter across its internally specified inputs and subject
+  ///         to the coverage hint.
+  ///
+  ///         Uses |GetFilterCoverage|.
   std::optional<Rect> GetLocalCoverage(const Entity& local_entity) const;
 
   FilterInput::Vector inputs_;
-  std::optional<Rect> coverage_crop_;
+  Matrix effect_transform_ = Matrix();
 
-  FML_DISALLOW_COPY_AND_ASSIGN(FilterContents);
+  FilterContents(const FilterContents&) = delete;
+
+  FilterContents& operator=(const FilterContents&) = delete;
 };
 
 }  // namespace impeller
+
+#endif  // FLUTTER_IMPELLER_ENTITY_CONTENTS_FILTERS_FILTER_CONTENTS_H_

@@ -25,10 +25,13 @@ std::shared_ptr<const Sampler> SamplerLibraryMTL::GetSampler(
   auto desc = [[MTLSamplerDescriptor alloc] init];
   desc.minFilter = ToMTLSamplerMinMagFilter(descriptor.min_filter);
   desc.magFilter = ToMTLSamplerMinMagFilter(descriptor.mag_filter);
+  desc.mipFilter = ToMTLSamplerMipFilter(descriptor.mip_filter);
   desc.sAddressMode = ToMTLSamplerAddressMode(descriptor.width_address_mode);
   desc.tAddressMode = ToMTLSamplerAddressMode(descriptor.height_address_mode);
   desc.rAddressMode = ToMTLSamplerAddressMode(descriptor.depth_address_mode);
-
+  if (@available(iOS 14.0, macos 10.12, *)) {
+    desc.borderColor = MTLSamplerBorderColorTransparentBlack;
+  }
   if (!descriptor.label.empty()) {
     desc.label = @(descriptor.label.c_str());
   }

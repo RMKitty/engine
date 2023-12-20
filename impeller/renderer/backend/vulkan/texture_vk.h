@@ -2,22 +2,46 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef FLUTTER_IMPELLER_RENDERER_BACKEND_VULKAN_TEXTURE_VK_H_
+#define FLUTTER_IMPELLER_RENDERER_BACKEND_VULKAN_TEXTURE_VK_H_
+
+#include <variant>
 
 #include "flutter/fml/macros.h"
 #include "impeller/base/backend_cast.h"
-#include "impeller/renderer/texture.h"
+#include "impeller/core/texture.h"
+#include "impeller/renderer/backend/vulkan/context_vk.h"
+#include "impeller/renderer/backend/vulkan/device_buffer_vk.h"
+#include "impeller/renderer/backend/vulkan/formats_vk.h"
+#include "impeller/renderer/backend/vulkan/texture_source_vk.h"
+#include "impeller/renderer/backend/vulkan/vk.h"
 
 namespace impeller {
 
 class TextureVK final : public Texture, public BackendCast<TextureVK, Texture> {
  public:
-  TextureVK(TextureDescriptor desc);
+  TextureVK(std::weak_ptr<Context> context,
+            std::shared_ptr<TextureSourceVK> source);
 
   // |Texture|
   ~TextureVK() override;
 
+  vk::Image GetImage() const;
+
+  vk::ImageView GetImageView() const;
+
+  bool SetLayout(const BarrierVK& barrier) const;
+
+  vk::ImageLayout SetLayoutWithoutEncoding(vk::ImageLayout layout) const;
+
+  vk::ImageLayout GetLayout() const;
+
+  std::shared_ptr<const TextureSourceVK> GetTextureSource() const;
+
  private:
+  std::weak_ptr<Context> context_;
+  std::shared_ptr<TextureSourceVK> source_;
+
   // |Texture|
   void SetLabel(std::string_view label) override;
 
@@ -36,7 +60,11 @@ class TextureVK final : public Texture, public BackendCast<TextureVK, Texture> {
   // |Texture|
   ISize GetSize() const override;
 
-  FML_DISALLOW_COPY_AND_ASSIGN(TextureVK);
+  TextureVK(const TextureVK&) = delete;
+
+  TextureVK& operator=(const TextureVK&) = delete;
 };
 
 }  // namespace impeller
+
+#endif  // FLUTTER_IMPELLER_RENDERER_BACKEND_VULKAN_TEXTURE_VK_H_

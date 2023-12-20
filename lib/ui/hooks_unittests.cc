@@ -35,8 +35,7 @@ TEST_F(HooksTest, HooksUnitTests) {
 
   auto message_latch = std::make_shared<fml::AutoResetWaitableEvent>();
 
-  std::unique_ptr<Shell> shell =
-      CreateShell(std::move(settings), std::move(task_runners));
+  std::unique_ptr<Shell> shell = CreateShell(settings, task_runners);
   ASSERT_TRUE(shell->IsSetup());
 
   auto call_hook = [](Dart_NativeArguments args) {
@@ -55,14 +54,14 @@ TEST_F(HooksTest, HooksUnitTests) {
     int64_t arg_count;
     Dart_IntegerToInt64(arg_count_handle, &arg_count);
 
-    Dart_Handle hook_args[arg_count];
+    std::vector<Dart_Handle> hook_args;
     for (int i = 0; i < static_cast<int>(arg_count); i++) {
-      hook_args[i] = Dart_GetNativeArgument(args, 2 + i);
-      CHECK_DART_ERROR(hook_args[i]);
+      hook_args.push_back(Dart_GetNativeArgument(args, 2 + i));
+      CHECK_DART_ERROR(hook_args.back());
     }
 
     Dart_Handle hook_result =
-        Dart_InvokeClosure(hook, static_cast<int>(arg_count), hook_args);
+        Dart_InvokeClosure(hook, hook_args.size(), hook_args.data());
     CHECK_DART_ERROR(hook_result);
   };
 
@@ -80,7 +79,7 @@ TEST_F(HooksTest, HooksUnitTests) {
   });
 
   message_latch->Wait();
-  DestroyShell(std::move(shell), std::move(task_runners));
+  DestroyShell(std::move(shell), task_runners);
 }
 
 }  // namespace testing

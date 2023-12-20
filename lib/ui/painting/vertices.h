@@ -5,7 +5,7 @@
 #ifndef FLUTTER_LIB_UI_PAINTING_VERTICES_H_
 #define FLUTTER_LIB_UI_PAINTING_VERTICES_H_
 
-#include "flutter/display_list/display_list_vertices.h"
+#include "flutter/display_list/dl_vertices.h"
 #include "flutter/lib/ui/dart_wrapper.h"
 #include "third_party/skia/include/core/SkVertices.h"
 #include "third_party/tonic/typed_data/typed_list.h"
@@ -28,7 +28,7 @@ class Vertices : public RefCountedDartWrappable<Vertices> {
 
   const DlVertices* vertices() const { return vertices_.get(); }
 
-  size_t GetAllocationSize() const override;
+  void dispose();
 
  private:
   Vertices();

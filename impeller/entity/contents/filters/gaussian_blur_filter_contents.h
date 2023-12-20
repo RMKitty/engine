@@ -2,49 +2,79 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef FLUTTER_IMPELLER_ENTITY_CONTENTS_FILTERS_GAUSSIAN_BLUR_FILTER_CONTENTS_H_
+#define FLUTTER_IMPELLER_ENTITY_CONTENTS_FILTERS_GAUSSIAN_BLUR_FILTER_CONTENTS_H_
 
-#include <memory>
 #include <optional>
 #include "impeller/entity/contents/filters/filter_contents.h"
-#include "impeller/entity/contents/filters/inputs/filter_input.h"
 
 namespace impeller {
 
-class DirectionalGaussianBlurFilterContents final : public FilterContents {
+/// Performs a bidirectional Gaussian blur.
+///
+/// This is accomplished by rendering multiple passes in multiple directions.
+/// Note: This will replace `DirectionalGaussianBlurFilterContents`.
+class GaussianBlurFilterContents final : public FilterContents {
  public:
-  DirectionalGaussianBlurFilterContents();
+  explicit GaussianBlurFilterContents(Scalar sigma_x,
+                                      Scalar sigma_y,
+                                      Entity::TileMode tile_mode);
 
-  ~DirectionalGaussianBlurFilterContents() override;
-
-  void SetSigma(Sigma sigma);
-
-  void SetDirection(Vector2 direction);
-
-  void SetBlurStyle(BlurStyle blur_style);
-
-  void SetSourceOverride(FilterInput::Ref alpha_mask);
+  Scalar GetSigmaX() const { return sigma_x_; }
+  Scalar GetSigmaY() const { return sigma_y_; }
 
   // |FilterContents|
-  std::optional<Rect> GetFilterCoverage(const FilterInput::Vector& inputs,
-                                        const Entity& entity) const override;
+  std::optional<Rect> GetFilterSourceCoverage(
+      const Matrix& effect_transform,
+      const Rect& output_limit) const override;
+
+  // |FilterContents|
+  std::optional<Rect> GetFilterCoverage(
+      const FilterInput::Vector& inputs,
+      const Entity& entity,
+      const Matrix& effect_transform) const override;
+
+  /// Given a sigma (standard deviation) calculate the blur radius (1/2 the
+  /// kernel size).
+  static Scalar CalculateBlurRadius(Scalar sigma);
+
+  /// Calculate the UV coordinates for rendering the filter_input.
+  /// @param filter_input The FilterInput that should be rendered.
+  /// @param entity The associated entity for the filter_input.
+  /// @param texture_size The size of the texture_size the uvs will be used for.
+  static Quad CalculateUVs(const std::shared_ptr<FilterInput>& filter_input,
+                           const Entity& entity,
+                           const ISize& pass_size);
+
+  /// Calculate the scale factor for the downsample pass given a sigma value.
+  ///
+  /// Visible for testing.
+  static Scalar CalculateScale(Scalar sigma);
+
+  /// Scales down the sigma value to match Skia's behavior.
+  ///
+  /// effective_blur_radius = CalculateBlurRadius(ScaleSigma(sigma_));
+  ///
+  /// This function was calculated by observing Skia's behavior. Its blur at
+  /// 500 seemed to be 0.15.  Since we clamp at 500 I solved the quadratic
+  /// equation that puts the minima there and a f(0)=1.
+  static Scalar ScaleSigma(Scalar sigma);
 
  private:
   // |FilterContents|
-  bool RenderFilter(const FilterInput::Vector& input_textures,
-                    const ContentContext& renderer,
-                    const Entity& entity,
-                    RenderPass& pass,
-                    const Rect& coverage) const override;
-  Sigma blur_sigma_;
-  Vector2 blur_direction_;
-  BlurStyle blur_style_ = BlurStyle::kNormal;
-  bool src_color_factor_ = false;
-  bool inner_blur_factor_ = true;
-  bool outer_blur_factor_ = true;
-  FilterInput::Ref source_override_;
+  std::optional<Entity> RenderFilter(
+      const FilterInput::Vector& input_textures,
+      const ContentContext& renderer,
+      const Entity& entity,
+      const Matrix& effect_transform,
+      const Rect& coverage,
+      const std::optional<Rect>& coverage_hint) const override;
 
-  FML_DISALLOW_COPY_AND_ASSIGN(DirectionalGaussianBlurFilterContents);
+  const Scalar sigma_x_ = 0.0;
+  const Scalar sigma_y_ = 0.0;
+  const Entity::TileMode tile_mode_;
 };
 
 }  // namespace impeller
+
+#endif  // FLUTTER_IMPELLER_ENTITY_CONTENTS_FILTERS_GAUSSIAN_BLUR_FILTER_CONTENTS_H_

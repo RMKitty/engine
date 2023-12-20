@@ -9,14 +9,16 @@
 #import "flutter/common/task_runners.h"
 #import "flutter/fml/message_loop.h"
 #import "flutter/fml/thread.h"
+#import "flutter/lib/ui/window/platform_message.h"
+#import "flutter/lib/ui/window/platform_message_response.h"
 #import "flutter/shell/common/thread_host.h"
 #import "flutter/shell/platform/darwin/common/framework/Headers/FlutterMacros.h"
 
-FLUTTER_ASSERT_NOT_ARC
+FLUTTER_ASSERT_ARC
 
 namespace {
 using namespace flutter;
-fml::RefPtr<fml::TaskRunner> CreateNewThread(std::string name) {
+fml::RefPtr<fml::TaskRunner> CreateNewThread(const std::string& name) {
   auto thread = std::make_unique<fml::Thread>(name);
   auto runner = thread->GetTaskRunner();
   return runner;
@@ -42,20 +44,20 @@ class MockPlatformMessageResponse : public PlatformMessageResponse {
 
 @implementation PlatformMessageHandlerIosTest
 - (void)testCreate {
-  flutter::TaskRunners task_runners("test", GetCurrentTaskRunner(), CreateNewThread("raster"),
-                                    CreateNewThread("ui"), CreateNewThread("io"));
-  auto handler = std::make_unique<PlatformMessageHandlerIos>(task_runners);
+  TaskRunners task_runners("test", GetCurrentTaskRunner(), CreateNewThread("raster"),
+                           CreateNewThread("ui"), CreateNewThread("io"));
+  auto handler = std::make_unique<PlatformMessageHandlerIos>(task_runners.GetPlatformTaskRunner());
   XCTAssertTrue(handler);
 }
 
 - (void)testSetAndCallHandler {
   ThreadHost thread_host("io.flutter.test." + std::string(self.name.UTF8String),
-                         ThreadHost::Type::RASTER | ThreadHost::Type::IO | ThreadHost::Type::UI);
+                         ThreadHost::Type::kRaster | ThreadHost::Type::kIo | ThreadHost::Type::kUi);
   TaskRunners task_runners(
       "test", GetCurrentTaskRunner(), thread_host.raster_thread->GetTaskRunner(),
       thread_host.ui_thread->GetTaskRunner(), thread_host.io_thread->GetTaskRunner());
 
-  auto handler = std::make_unique<PlatformMessageHandlerIos>(task_runners);
+  auto handler = std::make_unique<PlatformMessageHandlerIos>(task_runners.GetPlatformTaskRunner());
   std::string channel = "foo";
   XCTestExpectation* didCallReply = [self expectationWithDescription:@"didCallReply"];
   handler->SetMessageHandler(
@@ -76,12 +78,12 @@ class MockPlatformMessageResponse : public PlatformMessageResponse {
 
 - (void)testSetClearAndCallHandler {
   ThreadHost thread_host("io.flutter.test." + std::string(self.name.UTF8String),
-                         ThreadHost::Type::RASTER | ThreadHost::Type::IO | ThreadHost::Type::UI);
+                         ThreadHost::Type::kRaster | ThreadHost::Type::kIo | ThreadHost::Type::kUi);
   TaskRunners task_runners(
       "test", GetCurrentTaskRunner(), thread_host.raster_thread->GetTaskRunner(),
       thread_host.ui_thread->GetTaskRunner(), thread_host.io_thread->GetTaskRunner());
 
-  auto handler = std::make_unique<PlatformMessageHandlerIos>(task_runners);
+  auto handler = std::make_unique<PlatformMessageHandlerIos>(task_runners.GetPlatformTaskRunner());
   std::string channel = "foo";
   XCTestExpectation* didCallMessage = [self expectationWithDescription:@"didCallMessage"];
   handler->SetMessageHandler(
@@ -104,12 +106,12 @@ class MockPlatformMessageResponse : public PlatformMessageResponse {
 
 - (void)testSetAndCallHandlerTaskQueue {
   ThreadHost thread_host("io.flutter.test." + std::string(self.name.UTF8String),
-                         ThreadHost::Type::RASTER | ThreadHost::Type::IO | ThreadHost::Type::UI);
+                         ThreadHost::Type::kRaster | ThreadHost::Type::kIo | ThreadHost::Type::kUi);
   TaskRunners task_runners(
       "test", GetCurrentTaskRunner(), thread_host.raster_thread->GetTaskRunner(),
       thread_host.ui_thread->GetTaskRunner(), thread_host.io_thread->GetTaskRunner());
 
-  auto handler = std::make_unique<PlatformMessageHandlerIos>(task_runners);
+  auto handler = std::make_unique<PlatformMessageHandlerIos>(task_runners.GetPlatformTaskRunner());
   std::string channel = "foo";
   XCTestExpectation* didCallReply = [self expectationWithDescription:@"didCallReply"];
   NSObject<FlutterTaskQueue>* taskQueue = PlatformMessageHandlerIos::MakeBackgroundTaskQueue();

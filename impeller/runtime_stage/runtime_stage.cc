@@ -43,18 +43,14 @@ static RuntimeUniformType ToType(fb::UniformDataType type) {
   FML_UNREACHABLE();
 }
 
-static ShaderStage ToShaderStage(fb::Stage stage) {
+static RuntimeShaderStage ToShaderStage(fb::Stage stage) {
   switch (stage) {
     case fb::Stage::kVertex:
-      return ShaderStage::kVertex;
+      return RuntimeShaderStage::kVertex;
     case fb::Stage::kFragment:
-      return ShaderStage::kFragment;
+      return RuntimeShaderStage::kFragment;
     case fb::Stage::kCompute:
-      return ShaderStage::kCompute;
-    case fb::Stage::kTessellationControl:
-      return ShaderStage::kTessellationControl;
-    case fb::Stage::kTessellationEvaluation:
-      return ShaderStage::kTessellationEvaluation;
+      return RuntimeShaderStage::kCompute;
   }
   FML_UNREACHABLE();
 }
@@ -65,12 +61,16 @@ RuntimeStage::RuntimeStage(std::shared_ptr<fml::Mapping> payload)
     return;
   }
   if (!fb::RuntimeStageBufferHasIdentifier(payload_->GetMapping())) {
-    VALIDATION_LOG
-        << "Impeller Runtime stage has invalid magic. Perhaps the stage "
-           "information is for the incorrect backend or the data is corrupted?";
     return;
   }
-  auto runtime_stage = fb::GetRuntimeStage(payload_->GetMapping());
+  Setup(fb::GetRuntimeStage(payload_->GetMapping()));
+}
+
+RuntimeStage::RuntimeStage(const fb::RuntimeStage* runtime_stage) {
+  Setup(runtime_stage);
+}
+
+void RuntimeStage::Setup(const fb::RuntimeStage* runtime_stage) {
   if (!runtime_stage) {
     return;
   }
@@ -78,15 +78,19 @@ RuntimeStage::RuntimeStage(std::shared_ptr<fml::Mapping> payload)
   stage_ = ToShaderStage(runtime_stage->stage());
   entrypoint_ = runtime_stage->entrypoint()->str();
 
-  for (auto i = runtime_stage->uniforms()->begin(),
-            end = runtime_stage->uniforms()->end();
-       i != end; i++) {
-    RuntimeUniformDescription desc;
-    desc.name = i->name()->str();
-    desc.location = i->location();
-    desc.type = ToType(i->type());
-    desc.dimensions = RuntimeUniformDimensions{i->rows(), i->columns()};
-    uniforms_.emplace_back(std::move(desc));
+  auto* uniforms = runtime_stage->uniforms();
+  if (uniforms) {
+    for (auto i = uniforms->begin(), end = uniforms->end(); i != end; i++) {
+      RuntimeUniformDescription desc;
+      desc.name = i->name()->str();
+      desc.location = i->location();
+      desc.type = ToType(i->type());
+      desc.dimensions = RuntimeUniformDimensions{
+          static_cast<size_t>(i->rows()), static_cast<size_t>(i->columns())};
+      desc.bit_width = i->bit_width();
+      desc.array_elements = i->array_elements();
+      uniforms_.emplace_back(std::move(desc));
+    }
   }
 
   code_mapping_ = std::make_shared<fml::NonOwnedMapping>(
@@ -95,10 +99,20 @@ RuntimeStage::RuntimeStage(std::shared_ptr<fml::Mapping> payload)
       [payload = payload_](auto, auto) {}  //
   );
 
+  if (runtime_stage->sksl()) {
+    sksl_mapping_ = std::make_shared<fml::NonOwnedMapping>(
+        runtime_stage->sksl()->data(),       //
+        runtime_stage->sksl()->size(),       //
+        [payload = payload_](auto, auto) {}  //
+    );
+  }
+
   is_valid_ = true;
 }
 
 RuntimeStage::~RuntimeStage() = default;
+RuntimeStage::RuntimeStage(RuntimeStage&&) = default;
+RuntimeStage& RuntimeStage::operator=(RuntimeStage&&) = default;
 
 bool RuntimeStage::IsValid() const {
   return is_valid_;
@@ -106,6 +120,10 @@ bool RuntimeStage::IsValid() const {
 
 const std::shared_ptr<fml::Mapping>& RuntimeStage::GetCodeMapping() const {
   return code_mapping_;
+}
+
+const std::shared_ptr<fml::Mapping>& RuntimeStage::GetSkSLMapping() const {
+  return sksl_mapping_;
 }
 
 const std::vector<RuntimeUniformDescription>& RuntimeStage::GetUniforms()
@@ -127,8 +145,16 @@ const std::string& RuntimeStage::GetEntrypoint() const {
   return entrypoint_;
 }
 
-ShaderStage RuntimeStage::GetShaderStage() const {
+RuntimeShaderStage RuntimeStage::GetShaderStage() const {
   return stage_;
+}
+
+bool RuntimeStage::IsDirty() const {
+  return is_dirty_;
+}
+
+void RuntimeStage::SetClean() {
+  is_dirty_ = false;
 }
 
 }  // namespace impeller

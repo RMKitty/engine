@@ -7,7 +7,9 @@
 #include <sstream>
 #include <string>
 
+#include "flutter/fml/container.h"
 #include "flutter/fml/trace_event.h"
+#include "fml/closure.h"
 #include "impeller/base/promise.h"
 #include "impeller/renderer/backend/gles/pipeline_gles.h"
 #include "impeller/renderer/backend/gles/shader_function_gles.h"
@@ -31,6 +33,19 @@ static std::string GetShaderInfoLog(const ProcTableGLES& gl, GLuint shader) {
   return log_string;
 }
 
+static std::string GetShaderSource(const ProcTableGLES& gl, GLuint shader) {
+  // Arbitrarily chosen size that should be larger than most shaders.
+  // Since this only fires on compilation errors the performance shouldn't
+  // matter.
+  auto data = static_cast<char*>(malloc(10240));
+  GLsizei length;
+  gl.GetShaderSource(shader, 10240, &length, data);
+
+  auto result = std::string{data, static_cast<size_t>(length)};
+  free(data);
+  return result;
+}
+
 static void LogShaderCompilationFailure(const ProcTableGLES& gl,
                                         GLuint shader,
                                         const std::string& name,
@@ -48,12 +63,6 @@ static void LogShaderCompilationFailure(const ProcTableGLES& gl,
     case ShaderStage::kFragment:
       stream << "fragment";
       break;
-    case ShaderStage::kTessellationControl:
-      stream << "tessellation control";
-      break;
-    case ShaderStage::kTessellationEvaluation:
-      stream << "tessellation evaluation";
-      break;
     case ShaderStage::kCompute:
       stream << "compute";
       break;
@@ -61,16 +70,13 @@ static void LogShaderCompilationFailure(const ProcTableGLES& gl,
   stream << " shader for '" << name << "' with error:" << std::endl;
   stream << GetShaderInfoLog(gl, shader) << std::endl;
   stream << "Shader source was: " << std::endl;
-  stream << std::string{reinterpret_cast<const char*>(
-                            source_mapping.GetMapping()),
-                        source_mapping.GetSize()}
-         << std::endl;
+  stream << GetShaderSource(gl, shader) << std::endl;
   VALIDATION_LOG << stream.str();
 }
 
 static bool LinkProgram(
     const ReactorGLES& reactor,
-    std::shared_ptr<PipelineGLES> pipeline,
+    const std::shared_ptr<PipelineGLES>& pipeline,
     const std::shared_ptr<const ShaderFunction>& vert_function,
     const std::shared_ptr<const ShaderFunction>& frag_function) {
   TRACE_EVENT0("impeller", __FUNCTION__);
@@ -103,8 +109,10 @@ static bool LinkProgram(
   fml::ScopedCleanupClosure delete_frag_shader(
       [&gl, frag_shader]() { gl.DeleteShader(frag_shader); });
 
-  gl.ShaderSourceMapping(vert_shader, *vert_mapping);
-  gl.ShaderSourceMapping(frag_shader, *frag_mapping);
+  gl.ShaderSourceMapping(vert_shader, *vert_mapping,
+                         descriptor.GetSpecializationConstants());
+  gl.ShaderSourceMapping(frag_shader, *frag_mapping,
+                         descriptor.GetSpecializationConstants());
 
   gl.CompileShader(vert_shader);
   gl.CompileShader(frag_shader);
@@ -113,7 +121,7 @@ static bool LinkProgram(
   GLint frag_status = GL_FALSE;
 
   gl.GetShaderiv(vert_shader, GL_COMPILE_STATUS, &vert_status);
-  gl.GetShaderiv(vert_shader, GL_COMPILE_STATUS, &frag_status);
+  gl.GetShaderiv(frag_shader, GL_COMPILE_STATUS, &frag_status);
 
   if (vert_status != GL_TRUE) {
     LogShaderCompilationFailure(gl, vert_shader, descriptor.GetLabel(),
@@ -172,14 +180,16 @@ bool PipelineLibraryGLES::IsValid() const {
 }
 
 // |PipelineLibrary|
-PipelineFuture PipelineLibraryGLES::GetRenderPipeline(
+PipelineFuture<PipelineDescriptor> PipelineLibraryGLES::GetPipeline(
     PipelineDescriptor descriptor) {
   if (auto found = pipelines_.find(descriptor); found != pipelines_.end()) {
     return found->second;
   }
 
   if (!reactor_) {
-    return RealizedFuture<std::shared_ptr<Pipeline>>(nullptr);
+    return {
+        descriptor,
+        RealizedFuture<std::shared_ptr<Pipeline<PipelineDescriptor>>>(nullptr)};
   }
 
   auto vert_function = descriptor.GetEntrypointForStage(ShaderStage::kVertex);
@@ -188,12 +198,16 @@ PipelineFuture PipelineLibraryGLES::GetRenderPipeline(
   if (!vert_function || !frag_function) {
     VALIDATION_LOG
         << "Could not find stage entrypoint functions in pipeline descriptor.";
-    return RealizedFuture<std::shared_ptr<Pipeline>>(nullptr);
+    return {
+        descriptor,
+        RealizedFuture<std::shared_ptr<Pipeline<PipelineDescriptor>>>(nullptr)};
   }
 
-  auto promise = std::make_shared<std::promise<std::shared_ptr<Pipeline>>>();
-  auto future = PipelineFuture{promise->get_future()};
-  pipelines_[descriptor] = future;
+  auto promise = std::make_shared<
+      std::promise<std::shared_ptr<Pipeline<PipelineDescriptor>>>>();
+  auto pipeline_future =
+      PipelineFuture<PipelineDescriptor>{descriptor, promise->get_future()};
+  pipelines_[descriptor] = pipeline_future;
   auto weak_this = weak_from_this();
 
   auto result = reactor_->AddOperation(
@@ -214,10 +228,10 @@ PipelineFuture PipelineLibraryGLES::GetRenderPipeline(
           VALIDATION_LOG << "Could not obtain program handle.";
           return;
         }
-        const auto link_result = LinkProgram(reactor,                   //
-                                             pipeline,                  //
-                                             std::move(vert_function),  //
-                                             std::move(frag_function)   //
+        const auto link_result = LinkProgram(reactor,        //
+                                             pipeline,       //
+                                             vert_function,  //
+                                             frag_function   //
         );
         if (!link_result) {
           promise->set_value(nullptr);
@@ -239,7 +253,26 @@ PipelineFuture PipelineLibraryGLES::GetRenderPipeline(
       });
   FML_CHECK(result);
 
-  return future;
+  return pipeline_future;
+}
+
+// |PipelineLibrary|
+PipelineFuture<ComputePipelineDescriptor> PipelineLibraryGLES::GetPipeline(
+    ComputePipelineDescriptor descriptor) {
+  auto promise = std::make_shared<
+      std::promise<std::shared_ptr<Pipeline<ComputePipelineDescriptor>>>>();
+  // TODO(dnfield): implement compute for GLES.
+  promise->set_value(nullptr);
+  return {descriptor, promise->get_future()};
+}
+
+// |PipelineLibrary|
+void PipelineLibraryGLES::RemovePipelinesWithEntryPoint(
+    std::shared_ptr<const ShaderFunction> function) {
+  fml::erase_if(pipelines_, [&](auto item) {
+    return item->first.GetEntrypointForStage(function->GetStage())
+        ->IsEqual(*function);
+  });
 }
 
 // |PipelineLibrary|

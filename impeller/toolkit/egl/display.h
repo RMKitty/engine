@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef FLUTTER_IMPELLER_TOOLKIT_EGL_DISPLAY_H_
+#define FLUTTER_IMPELLER_TOOLKIT_EGL_DISPLAY_H_
 
 #include <memory>
 #include <optional>
@@ -21,27 +22,31 @@ class Display {
  public:
   Display();
 
-  ~Display();
+  virtual ~Display();
 
-  bool IsValid() const;
+  virtual bool IsValid() const;
 
-  std::unique_ptr<Config> ChooseConfig(ConfigDescriptor config) const;
+  virtual std::unique_ptr<Config> ChooseConfig(ConfigDescriptor config) const;
 
-  std::unique_ptr<Context> CreateContext(const Config& config,
-                                         const Context* share_context);
+  virtual std::unique_ptr<Context> CreateContext(const Config& config,
+                                                 const Context* share_context);
 
-  std::unique_ptr<Surface> CreateWindowSurface(const Config& config,
-                                               EGLNativeWindowType window);
+  virtual std::unique_ptr<Surface> CreateWindowSurface(
+      const Config& config,
+      EGLNativeWindowType window);
 
-  std::unique_ptr<Surface> CreatePixelBufferSurface(const Config& config,
-                                                    size_t width,
-                                                    size_t height);
+  virtual std::unique_ptr<Surface>
+  CreatePixelBufferSurface(const Config& config, size_t width, size_t height);
 
  private:
   EGLDisplay display_ = EGL_NO_DISPLAY;
 
-  FML_DISALLOW_COPY_AND_ASSIGN(Display);
+  Display(const Display&) = delete;
+
+  Display& operator=(const Display&) = delete;
 };
 
 }  // namespace egl
 }  // namespace impeller
+
+#endif  // FLUTTER_IMPELLER_TOOLKIT_EGL_DISPLAY_H_

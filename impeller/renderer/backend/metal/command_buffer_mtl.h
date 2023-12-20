@@ -2,19 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef FLUTTER_IMPELLER_RENDERER_BACKEND_METAL_COMMAND_BUFFER_MTL_H_
+#define FLUTTER_IMPELLER_RENDERER_BACKEND_METAL_COMMAND_BUFFER_MTL_H_
 
 #include <Metal/Metal.h>
 
 #include "flutter/fml/macros.h"
+#include "impeller/core/allocator.h"
 #include "impeller/renderer/command_buffer.h"
 
 namespace impeller {
 
 class CommandBufferMTL final : public CommandBuffer {
  public:
-  CommandBufferMTL();
-
   // |CommandBuffer|
   ~CommandBufferMTL() override;
 
@@ -23,7 +23,8 @@ class CommandBufferMTL final : public CommandBuffer {
 
   id<MTLCommandBuffer> buffer_ = nullptr;
 
-  CommandBufferMTL(id<MTLCommandQueue> queue);
+  CommandBufferMTL(const std::weak_ptr<const Context>& context,
+                   id<MTLCommandQueue> queue);
 
   // |CommandBuffer|
   void SetLabel(const std::string& label) const override;
@@ -32,13 +33,32 @@ class CommandBufferMTL final : public CommandBuffer {
   bool IsValid() const override;
 
   // |CommandBuffer|
-  bool SubmitCommands(CompletionCallback callback) override;
+  bool OnSubmitCommands(CompletionCallback callback) override;
 
   // |CommandBuffer|
-  std::shared_ptr<RenderPass> OnCreateRenderPass(
-      RenderTarget target) const override;
+  void OnWaitUntilScheduled() override;
 
-  FML_DISALLOW_COPY_AND_ASSIGN(CommandBufferMTL);
+  // |CommandBuffer|
+  bool EncodeAndSubmit(const std::shared_ptr<RenderPass>& render_pass) override;
+
+  // |CommandBuffer|
+  bool EncodeAndSubmit(const std::shared_ptr<BlitPass>& blit_ass,
+                       const std::shared_ptr<Allocator>& allocator) override;
+
+  // |CommandBuffer|
+  std::shared_ptr<RenderPass> OnCreateRenderPass(RenderTarget target) override;
+
+  // |CommandBuffer|
+  std::shared_ptr<BlitPass> OnCreateBlitPass() override;
+
+  // |CommandBuffer|
+  std::shared_ptr<ComputePass> OnCreateComputePass() override;
+
+  CommandBufferMTL(const CommandBufferMTL&) = delete;
+
+  CommandBufferMTL& operator=(const CommandBufferMTL&) = delete;
 };
 
 }  // namespace impeller
+
+#endif  // FLUTTER_IMPELLER_RENDERER_BACKEND_METAL_COMMAND_BUFFER_MTL_H_

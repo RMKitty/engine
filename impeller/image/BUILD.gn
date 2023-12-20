@@ -11,8 +11,6 @@ impeller_component("image") {
   ]
 
   sources = [
-    "backends/skia/compressed_image_skia.cc",
-    "backends/skia/compressed_image_skia.h",
     "compressed_image.cc",
     "decompressed_image.cc",
   ]
@@ -22,9 +20,23 @@ impeller_component("image") {
     "../geometry",
   ]
 
+  deps = [ "//flutter/fml" ]
+}
+
+impeller_component("image_skia_backend") {
+  public = [ "backends/skia/compressed_image_skia.h" ]
+
+  sources = [ "backends/skia/compressed_image_skia.cc" ]
+
+  public_deps = [
+    ":image",
+    "../base",
+    "../geometry",
+  ]
+
   deps = [
     "//flutter/fml",
-    "//third_party/skia",
+    "//flutter/skia",
   ]
 }
 
@@ -32,7 +44,7 @@ impeller_component("image_unittests") {
   testonly = true
   sources = []
   deps = [
-    ":image",
+    ":image_skia_backend",
     "//flutter/testing",
   ]
 }

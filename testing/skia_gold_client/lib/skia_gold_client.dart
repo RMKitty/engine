@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
+import 'package:engine_repo_tools/engine_repo_tools.dart';
 import 'package:path/path.dart' as path;
 import 'package:process/process.dart';
 
@@ -36,7 +37,13 @@ class SkiaGoldClient {
   ///
   /// [dimensions] allows to add attributes about the environment
   /// used to generate the screenshots.
-  SkiaGoldClient(this.workDirectory, { this.dimensions });
+  SkiaGoldClient(this.workDirectory, { this.dimensions, this.verbose = false});
+
+  /// Whether to print verbose output from goldctl.
+  ///
+  /// This flag is intended for use in debugging CI issues, and should not
+  /// ordinarily be set to true.
+  final bool verbose;
 
   /// Allows to add attributes about the environment used to generate the screenshots.
   final Map<String, String>? dimensions;
@@ -55,9 +62,12 @@ class SkiaGoldClient {
   String get _keysPath => path.join(workDirectory.path, 'keys.json');
   String get _failuresPath => path.join(workDirectory.path, 'failures.json');
 
-  /// Indicates whether the `goldctl` tool has been initialized for the current
-  /// test context.
-  bool _isInitialized = false;
+  Future<void>? _initResult;
+  Future<void> _initOnce(Future<void> Function() callback) {
+    // If a call has already been made, return the result of that call.
+    _initResult ??= callback();
+    return _initResult!;
+  }
 
   /// Indicates whether the client has already been authorized to communicate
   /// with the Skia Gold backend.
@@ -86,11 +96,13 @@ class SkiaGoldClient {
   ///
   /// This ensures that the `goldctl` tool is authorized and ready for testing.
   Future<void> auth() async {
-    if (_isAuthorized)
+    if (_isAuthorized) {
       return;
+    }
     final List<String> authCommand = <String>[
       _goldctl,
       'auth',
+      if (verbose) '--verbose',
       '--work-dir', _tempPath,
       '--luci',
     ];
@@ -107,6 +119,9 @@ class SkiaGoldClient {
         ..writeln('stdout: ${result.stdout}')
         ..writeln('stderr: ${result.stderr}');
       throw Exception(buf.toString());
+    } else if (verbose) {
+      print('stdout:\n${result.stdout}');
+      print('stderr:\n${result.stderr}');
     }
   }
 
@@ -120,10 +135,6 @@ class SkiaGoldClient {
   /// The `imgtest` command collects and uploads test results to the Skia Gold
   /// backend, the `init` argument initializes the current test.
   Future<void> _imgtestInit() async {
-    if (_isInitialized) {
-      return;
-    }
-
     final File keys = File(_keysPath);
     final File failures = File(_failuresPath);
 
@@ -134,6 +145,7 @@ class SkiaGoldClient {
     final List<String> imgtestInitCommand = <String>[
       _goldctl,
       'imgtest', 'init',
+      if (verbose) '--verbose',
       '--instance', _instance,
       '--work-dir', _tempPath,
       '--commit', commitHash,
@@ -163,8 +175,11 @@ class SkiaGoldClient {
         ..writeln('stdout: ${result.stdout}')
         ..writeln('stderr: ${result.stderr}');
       throw Exception(buf.toString());
+    } else if (verbose) {
+      print('stdout:\n${result.stdout}');
+      print('stderr:\n${result.stderr}');
     }
-    _isInitialized = true;
+
   }
 
   /// Executes the `imgtest add` command in the `goldctl` tool.
@@ -177,19 +192,25 @@ class SkiaGoldClient {
   /// The [testName] and [goldenFile] parameters reference the current
   /// comparison being evaluated.
   ///
-  /// [pixelColorDelta] defines maximum acceptable difference in RGB channels of each pixel,
-  /// such that:
+  /// [pixelColorDelta] defines maximum acceptable difference in RGB channels of
+  /// each pixel, such that:
   ///
   /// ```
-  /// abs(r(image) - r(golden)) + abs(g(image) - g(golden)) + abs(b(image) - b(golden)) <= pixelDeltaThreshold
+  /// bool isSame(Color image, Color golden, int pixelDeltaThreshold) {
+  ///   return abs(image.r - golden.r)
+  ///     + abs(image.g - golden.g)
+  ///     + abs(image.b - golden.b) <= pixelDeltaThreshold;
+  /// }
   /// ```
   ///
-  /// [differentPixelsRate] is the fraction of accepted pixels to be wrong in the range [0.0, 1.0].
-  /// Defaults to 0.1. A value of 0.1 means that 10% of the pixels are allowed to change.
+  /// [differentPixelsRate] is the fraction of pixels that can differ, as
+  /// determined by the [pixelColorDelta] parameter. It's in the range [0.0,
+  /// 1.0] and defaults to 0.01. A value of 0.01 means that 1% of the pixels are
+  /// allowed to be different.
   Future<void> addImg(
     String testName,
     File goldenFile, {
-    double differentPixelsRate = 0.1,
+    double differentPixelsRate = 0.01,
     int pixelColorDelta = 0,
     required int screenshotSize,
   }) async {
@@ -219,11 +240,12 @@ class SkiaGoldClient {
     int pixelDeltaThreshold,
     double maxDifferentPixelsRate,
   ) async {
-    await _imgtestInit();
+    await _initOnce(_imgtestInit);
 
     final List<String> imgtestCommand = <String>[
       _goldctl,
       'imgtest', 'add',
+      if (verbose) '--verbose',
       '--work-dir', _tempPath,
       '--test-name', cleanTestName(testName),
       '--png-file', goldenFile.path,
@@ -238,6 +260,9 @@ class SkiaGoldClient {
       // is meant to inform when an unexpected result occurs.
       print('goldctl imgtest add stdout: ${result.stdout}');
       print('goldctl imgtest add stderr: ${result.stderr}');
+    } else if (verbose) {
+      print('stdout:\n${result.stdout}');
+      print('stderr:\n${result.stderr}');
     }
   }
 
@@ -246,10 +271,6 @@ class SkiaGoldClient {
   /// The `imgtest` command collects and uploads test results to the Skia Gold
   /// backend, the `init` argument initializes the current tryjob.
   Future<void> _tryjobInit() async {
-    if (_isInitialized) {
-      return;
-    }
-
     final File keys = File(_keysPath);
     final File failures = File(_failuresPath);
 
@@ -260,6 +281,7 @@ class SkiaGoldClient {
     final List<String> tryjobInitCommand = <String>[
       _goldctl,
       'imgtest', 'init',
+      if (verbose) '--verbose',
       '--instance', _instance,
       '--work-dir', _tempPath,
       '--commit', commitHash,
@@ -292,8 +314,10 @@ class SkiaGoldClient {
         ..writeln('stdout: ${result.stdout}')
         ..writeln('stderr: ${result.stderr}');
       throw Exception(buf.toString());
+    } else if (verbose) {
+      print('stdout:\n${result.stdout}');
+      print('stderr:\n${result.stderr}');
     }
-    _isInitialized = true;
   }
 
   /// Executes the `imgtest add` command in the `goldctl` tool for tryjobs.
@@ -312,11 +336,12 @@ class SkiaGoldClient {
     int pixelDeltaThreshold,
     double differentPixelsRate,
   ) async {
-    await _tryjobInit();
+    await _initOnce(_tryjobInit);
 
     final List<String> tryjobCommand = <String>[
       _goldctl,
       'imgtest', 'add',
+      if (verbose) '--verbose',
       '--work-dir', _tempPath,
       '--test-name', cleanTestName(testName),
       '--png-file', goldenFile.path,
@@ -338,6 +363,9 @@ class SkiaGoldClient {
         ..writeln('stderr: ${result.stderr}')
         ..writeln();
       throw Exception(buf.toString());
+    } else if (verbose) {
+      print('stdout:\n${result.stdout}');
+      print('stderr:\n${result.stderr}');
     }
   }
 
@@ -380,8 +408,9 @@ class SkiaGoldClient {
         final HttpClientResponse response = await request.close();
         rawResponse = await utf8.decodeStream(response);
         final dynamic jsonResponse = json.decode(rawResponse);
-        if (jsonResponse is! Map<String, dynamic>)
+        if (jsonResponse is! Map<String, dynamic>) {
           throw const FormatException('Skia gold expectations do not match expected format.');
+        }
         expectation = jsonResponse['digest'] as String?;
       } on FormatException catch (error) {
         print(
@@ -420,13 +449,13 @@ class SkiaGoldClient {
 
   /// Returns the current commit hash of the engine repository.
   Future<String> _getCurrentCommit() async {
-    final File currentScript = File.fromUri(Platform.script);
+    final String engineCheckout = Engine.findWithin().flutterDir.path;
     final ProcessResult revParse = await process.run(
       <String>['git', 'rev-parse', 'HEAD'],
-      workingDirectory: currentScript.parent.absolute.path,
+      workingDirectory: engineCheckout,
     );
     if (revParse.exitCode != 0) {
-      throw Exception('Current commit of the engine can not be found from path ${currentScript.path}.');
+      throw Exception('Current commit of the engine can not be found from path $engineCheckout.');
     }
     return (revParse.stdout as String).trim();
   }

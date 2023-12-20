@@ -9,6 +9,8 @@
 
 #include <chrono>
 
+#include "flutter/fml/macros.h"
+
 namespace flutter {
 
 // A test utility class providing the ability to access and alter various
@@ -27,14 +29,12 @@ class EngineModifier {
   // engine unless overwritten again.
   FlutterEngineProcTable& embedder_api() { return engine_->embedder_api_; }
 
-  // Explicitly sets the SurfaceManager being used by the FlutterWindowsEngine
-  // instance. This allows us to test fallback paths when a SurfaceManager fails
-  // to initialize for whatever reason.
+  // Override the surface manager used by the engine.
   //
   // Modifications are to the engine, and will last for the lifetime of the
   // engine unless overwritten again.
-  void SetSurfaceManager(AngleSurfaceManager* surface_manager) {
-    engine_->surface_manager_.reset(surface_manager);
+  void SetSurfaceManager(std::unique_ptr<AngleSurfaceManager> surface_manager) {
+    engine_->surface_manager_ = std::move(surface_manager);
   }
 
   /// Reset the start_time field that is used to align vsync events.
@@ -60,8 +60,18 @@ class EngineModifier {
   // engine unless overwritten again.
   void ReleaseSurfaceManager() { engine_->surface_manager_.release(); }
 
+  // Run the FlutterWindowsEngine's handler that runs right before an engine
+  // restart. This resets the keyboard's state if it exists.
+  void Restart() { engine_->OnPreEngineRestart(); }
+
+  void SetLifecycleManager(std::unique_ptr<WindowsLifecycleManager>&& handler) {
+    engine_->lifecycle_manager_ = std::move(handler);
+  }
+
  private:
   FlutterWindowsEngine* engine_;
+
+  FML_DISALLOW_COPY_AND_ASSIGN(EngineModifier);
 };
 
 }  // namespace flutter

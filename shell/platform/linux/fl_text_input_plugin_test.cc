@@ -2,8 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "flutter/shell/platform/linux/fl_text_input_plugin.h"
+#include <utility>
+
 #include "flutter/shell/platform/linux/fl_method_codec_private.h"
+#include "flutter/shell/platform/linux/fl_text_input_plugin.h"
 #include "flutter/shell/platform/linux/public/flutter_linux/fl_binary_messenger.h"
 #include "flutter/shell/platform/linux/public/flutter_linux/fl_json_method_codec.h"
 #include "flutter/shell/platform/linux/public/flutter_linux/fl_value.h"
@@ -11,6 +13,7 @@
 #include "flutter/shell/platform/linux/testing/mock_binary_messenger.h"
 #include "flutter/shell/platform/linux/testing/mock_binary_messenger_response_handle.h"
 #include "flutter/shell/platform/linux/testing/mock_im_context.h"
+#include "flutter/shell/platform/linux/testing/mock_text_input_view_delegate.h"
 #include "flutter/testing/testing.h"
 
 #include "gmock/gmock.h"
@@ -43,7 +46,7 @@ class MethodCallMatcher {
 
   explicit MethodCallMatcher(::testing::Matcher<std::string> name,
                              ::testing::Matcher<FlValue*> args)
-      : name_(name), args_(args) {}
+      : name_(std::move(name)), args_(std::move(args)) {}
 
   bool MatchAndExplain(GBytes* method_call,
                        ::testing::MatchResultListener* result_listener) const {
@@ -88,9 +91,9 @@ class MethodCallMatcher {
   ::testing::Matcher<FlValue*> args_;
 };
 
-::testing::Matcher<GBytes*> MethodCall(std::string name,
+::testing::Matcher<GBytes*> MethodCall(const std::string& name,
                                        ::testing::Matcher<FlValue*> args) {
-  return MethodCallMatcher(::testing::StrEq(name), args);
+  return MethodCallMatcher(::testing::StrEq(name), std::move(args));
 }
 
 static FlValue* build_map(std::map<const gchar*, FlValue*> args) {
@@ -189,9 +192,10 @@ static void send_key_event(FlTextInputPlugin* plugin,
 TEST(FlTextInputPluginTest, MessageHandler) {
   ::testing::NiceMock<flutter::testing::MockBinaryMessenger> messenger;
   ::testing::NiceMock<flutter::testing::MockIMContext> context;
+  ::testing::NiceMock<flutter::testing::MockTextInputViewDelegate> delegate;
 
   g_autoptr(FlTextInputPlugin) plugin =
-      fl_text_input_plugin_new(messenger, context);
+      fl_text_input_plugin_new(messenger, context, delegate);
   EXPECT_NE(plugin, nullptr);
 
   EXPECT_TRUE(messenger.HasMessageHandler("flutter/textinput"));
@@ -200,9 +204,10 @@ TEST(FlTextInputPluginTest, MessageHandler) {
 TEST(FlTextInputPluginTest, SetClient) {
   ::testing::NiceMock<flutter::testing::MockBinaryMessenger> messenger;
   ::testing::NiceMock<flutter::testing::MockIMContext> context;
+  ::testing::NiceMock<flutter::testing::MockTextInputViewDelegate> delegate;
 
   g_autoptr(FlTextInputPlugin) plugin =
-      fl_text_input_plugin_new(messenger, context);
+      fl_text_input_plugin_new(messenger, context, delegate);
   EXPECT_NE(plugin, nullptr);
 
   g_autoptr(FlValue) args = build_input_config({.client_id = 1});
@@ -222,9 +227,10 @@ TEST(FlTextInputPluginTest, SetClient) {
 TEST(FlTextInputPluginTest, Show) {
   ::testing::NiceMock<flutter::testing::MockBinaryMessenger> messenger;
   ::testing::NiceMock<flutter::testing::MockIMContext> context;
+  ::testing::NiceMock<flutter::testing::MockTextInputViewDelegate> delegate;
 
   g_autoptr(FlTextInputPlugin) plugin =
-      fl_text_input_plugin_new(messenger, context);
+      fl_text_input_plugin_new(messenger, context, delegate);
   EXPECT_NE(plugin, nullptr);
 
   EXPECT_CALL(context,
@@ -246,9 +252,10 @@ TEST(FlTextInputPluginTest, Show) {
 TEST(FlTextInputPluginTest, Hide) {
   ::testing::NiceMock<flutter::testing::MockBinaryMessenger> messenger;
   ::testing::NiceMock<flutter::testing::MockIMContext> context;
+  ::testing::NiceMock<flutter::testing::MockTextInputViewDelegate> delegate;
 
   g_autoptr(FlTextInputPlugin) plugin =
-      fl_text_input_plugin_new(messenger, context);
+      fl_text_input_plugin_new(messenger, context, delegate);
   EXPECT_NE(plugin, nullptr);
 
   EXPECT_CALL(context,
@@ -270,9 +277,10 @@ TEST(FlTextInputPluginTest, Hide) {
 TEST(FlTextInputPluginTest, ClearClient) {
   ::testing::NiceMock<flutter::testing::MockBinaryMessenger> messenger;
   ::testing::NiceMock<flutter::testing::MockIMContext> context;
+  ::testing::NiceMock<flutter::testing::MockTextInputViewDelegate> delegate;
 
   g_autoptr(FlTextInputPlugin) plugin =
-      fl_text_input_plugin_new(messenger, context);
+      fl_text_input_plugin_new(messenger, context, delegate);
   EXPECT_NE(plugin, nullptr);
 
   g_autoptr(FlValue) null = fl_value_new_null();
@@ -291,9 +299,10 @@ TEST(FlTextInputPluginTest, ClearClient) {
 TEST(FlTextInputPluginTest, PerformAction) {
   ::testing::NiceMock<flutter::testing::MockBinaryMessenger> messenger;
   ::testing::NiceMock<flutter::testing::MockIMContext> context;
+  ::testing::NiceMock<flutter::testing::MockTextInputViewDelegate> delegate;
 
   g_autoptr(FlTextInputPlugin) plugin =
-      fl_text_input_plugin_new(messenger, context);
+      fl_text_input_plugin_new(messenger, context, delegate);
   EXPECT_NE(plugin, nullptr);
 
   // set input config
@@ -363,12 +372,78 @@ TEST(FlTextInputPluginTest, PerformAction) {
   send_key_event(plugin, GDK_KEY_Return);
 }
 
+// Regression test for https://github.com/flutter/flutter/issues/125879.
+TEST(FlTextInputPluginTest, MultilineWithSendAction) {
+  ::testing::NiceMock<flutter::testing::MockBinaryMessenger> messenger;
+  ::testing::NiceMock<flutter::testing::MockIMContext> context;
+  ::testing::NiceMock<flutter::testing::MockTextInputViewDelegate> delegate;
+
+  g_autoptr(FlTextInputPlugin) plugin =
+      fl_text_input_plugin_new(messenger, context, delegate);
+  EXPECT_NE(plugin, nullptr);
+
+  // Set input config.
+  g_autoptr(FlValue) config = build_input_config({
+      .client_id = 1,
+      .input_type = "TextInputType.multiline",
+      .input_action = "TextInputAction.send",
+  });
+  g_autoptr(FlJsonMethodCodec) codec = fl_json_method_codec_new();
+  g_autoptr(GBytes) set_client = fl_method_codec_encode_method_call(
+      FL_METHOD_CODEC(codec), "TextInput.setClient", config, nullptr);
+
+  g_autoptr(FlValue) null = fl_value_new_null();
+  EXPECT_CALL(messenger, fl_binary_messenger_send_response(
+                             ::testing::Eq<FlBinaryMessenger*>(messenger),
+                             ::testing::_, SuccessResponse(null), ::testing::_))
+      .WillOnce(::testing::Return(true));
+
+  messenger.ReceiveMessage("flutter/textinput", set_client);
+
+  // Set editing state.
+  g_autoptr(FlValue) state = build_editing_state({
+      .text = "Flutter",
+      .selection_base = 7,
+      .selection_extent = 7,
+  });
+  g_autoptr(GBytes) set_state = fl_method_codec_encode_method_call(
+      FL_METHOD_CODEC(codec), "TextInput.setEditingState", state, nullptr);
+
+  EXPECT_CALL(messenger, fl_binary_messenger_send_response(
+                             ::testing::Eq<FlBinaryMessenger*>(messenger),
+                             ::testing::_, SuccessResponse(null), ::testing::_))
+      .WillOnce(::testing::Return(true));
+
+  messenger.ReceiveMessage("flutter/textinput", set_state);
+
+  // Perform action.
+  g_autoptr(FlValue) action = build_list({
+      fl_value_new_int(1),  // client_id
+      fl_value_new_string("TextInputAction.send"),
+  });
+
+  // Because the input action is not set to TextInputAction.newline, the next
+  // expected call is "TextInputClient.performAction". If the input action was
+  // set to TextInputAction.newline the next call would be
+  // "TextInputClient.updateEditingState" (this case is tested in the test named
+  // 'PerformAction').
+  EXPECT_CALL(messenger, fl_binary_messenger_send_on_channel(
+                             ::testing::Eq<FlBinaryMessenger*>(messenger),
+                             ::testing::StrEq("flutter/textinput"),
+                             MethodCall("TextInputClient.performAction",
+                                        FlValueEq(action)),
+                             ::testing::_, ::testing::_, ::testing::_));
+
+  send_key_event(plugin, GDK_KEY_Return);
+}
+
 TEST(FlTextInputPluginTest, MoveCursor) {
   ::testing::NiceMock<flutter::testing::MockBinaryMessenger> messenger;
   ::testing::NiceMock<flutter::testing::MockIMContext> context;
+  ::testing::NiceMock<flutter::testing::MockTextInputViewDelegate> delegate;
 
   g_autoptr(FlTextInputPlugin) plugin =
-      fl_text_input_plugin_new(messenger, context);
+      fl_text_input_plugin_new(messenger, context, delegate);
   EXPECT_NE(plugin, nullptr);
 
   // set input config
@@ -443,9 +518,10 @@ TEST(FlTextInputPluginTest, MoveCursor) {
 TEST(FlTextInputPluginTest, Select) {
   ::testing::NiceMock<flutter::testing::MockBinaryMessenger> messenger;
   ::testing::NiceMock<flutter::testing::MockIMContext> context;
+  ::testing::NiceMock<flutter::testing::MockTextInputViewDelegate> delegate;
 
   g_autoptr(FlTextInputPlugin) plugin =
-      fl_text_input_plugin_new(messenger, context);
+      fl_text_input_plugin_new(messenger, context, delegate);
   EXPECT_NE(plugin, nullptr);
 
   // set input config
@@ -520,9 +596,10 @@ TEST(FlTextInputPluginTest, Select) {
 TEST(FlTextInputPluginTest, Composing) {
   ::testing::NiceMock<flutter::testing::MockBinaryMessenger> messenger;
   ::testing::NiceMock<flutter::testing::MockIMContext> context;
+  ::testing::NiceMock<flutter::testing::MockTextInputViewDelegate> delegate;
 
   g_autoptr(FlTextInputPlugin) plugin =
-      fl_text_input_plugin_new(messenger, context);
+      fl_text_input_plugin_new(messenger, context, delegate);
   EXPECT_NE(plugin, nullptr);
 
   g_signal_emit_by_name(context, "preedit-start", nullptr);
@@ -589,9 +666,10 @@ TEST(FlTextInputPluginTest, Composing) {
 TEST(FlTextInputPluginTest, SurroundingText) {
   ::testing::NiceMock<flutter::testing::MockBinaryMessenger> messenger;
   ::testing::NiceMock<flutter::testing::MockIMContext> context;
+  ::testing::NiceMock<flutter::testing::MockTextInputViewDelegate> delegate;
 
   g_autoptr(FlTextInputPlugin) plugin =
-      fl_text_input_plugin_new(messenger, context);
+      fl_text_input_plugin_new(messenger, context, delegate);
   EXPECT_NE(plugin, nullptr);
 
   // set input config
@@ -658,9 +736,10 @@ TEST(FlTextInputPluginTest, SurroundingText) {
 TEST(FlTextInputPluginTest, SetMarkedTextRect) {
   ::testing::NiceMock<flutter::testing::MockBinaryMessenger> messenger;
   ::testing::NiceMock<flutter::testing::MockIMContext> context;
+  ::testing::NiceMock<flutter::testing::MockTextInputViewDelegate> delegate;
 
   g_autoptr(FlTextInputPlugin) plugin =
-      fl_text_input_plugin_new(messenger, context);
+      fl_text_input_plugin_new(messenger, context, delegate);
   EXPECT_NE(plugin, nullptr);
 
   g_signal_emit_by_name(context, "preedit-start", nullptr);
@@ -719,11 +798,18 @@ TEST(FlTextInputPluginTest, SetMarkedTextRect) {
                              ::testing::_, SuccessResponse(null), ::testing::_))
       .WillOnce(::testing::Return(true));
 
+  EXPECT_CALL(delegate, fl_text_input_view_delegate_translate_coordinates(
+                            ::testing::Eq<FlTextInputViewDelegate*>(delegate),
+                            ::testing::Eq(27), ::testing::Eq(32), ::testing::_,
+                            ::testing::_))
+      .WillOnce(::testing::DoAll(::testing::SetArgPointee<3>(123),
+                                 ::testing::SetArgPointee<4>(456)));
+
   EXPECT_CALL(context, gtk_im_context_set_cursor_location(
                            ::testing::Eq<GtkIMContext*>(context),
                            ::testing::Pointee(::testing::AllOf(
-                               ::testing::Field(&GdkRectangle::x, 27),
-                               ::testing::Field(&GdkRectangle::y, 32),
+                               ::testing::Field(&GdkRectangle::x, 123),
+                               ::testing::Field(&GdkRectangle::y, 456),
                                ::testing::Field(&GdkRectangle::width, 0),
                                ::testing::Field(&GdkRectangle::height, 0)))));
 
@@ -733,9 +819,10 @@ TEST(FlTextInputPluginTest, SetMarkedTextRect) {
 TEST(FlTextInputPluginTest, TextInputTypeNone) {
   ::testing::NiceMock<flutter::testing::MockBinaryMessenger> messenger;
   ::testing::NiceMock<flutter::testing::MockIMContext> context;
+  ::testing::NiceMock<flutter::testing::MockTextInputViewDelegate> delegate;
 
   g_autoptr(FlTextInputPlugin) plugin =
-      fl_text_input_plugin_new(messenger, context);
+      fl_text_input_plugin_new(messenger, context, delegate);
   EXPECT_NE(plugin, nullptr);
 
   g_autoptr(FlValue) args = build_input_config({
@@ -775,9 +862,10 @@ TEST(FlTextInputPluginTest, TextInputTypeNone) {
 TEST(FlTextInputPluginTest, TextEditingDelta) {
   ::testing::NiceMock<flutter::testing::MockBinaryMessenger> messenger;
   ::testing::NiceMock<flutter::testing::MockIMContext> context;
+  ::testing::NiceMock<flutter::testing::MockTextInputViewDelegate> delegate;
 
   g_autoptr(FlTextInputPlugin) plugin =
-      fl_text_input_plugin_new(messenger, context);
+      fl_text_input_plugin_new(messenger, context, delegate);
   EXPECT_NE(plugin, nullptr);
 
   // set config
@@ -846,9 +934,10 @@ TEST(FlTextInputPluginTest, TextEditingDelta) {
 TEST(FlTextInputPluginTest, ComposingDelta) {
   ::testing::NiceMock<flutter::testing::MockBinaryMessenger> messenger;
   ::testing::NiceMock<flutter::testing::MockIMContext> context;
+  ::testing::NiceMock<flutter::testing::MockTextInputViewDelegate> delegate;
 
   g_autoptr(FlTextInputPlugin) plugin =
-      fl_text_input_plugin_new(messenger, context);
+      fl_text_input_plugin_new(messenger, context, delegate);
   EXPECT_NE(plugin, nullptr);
 
   // set config
@@ -869,6 +958,8 @@ TEST(FlTextInputPluginTest, ComposingDelta) {
 
   messenger.ReceiveMessage("flutter/textinput", set_client);
 
+  g_signal_emit_by_name(context, "preedit-start", nullptr);
+
   // update
   EXPECT_CALL(context,
               gtk_im_context_get_preedit_string(
@@ -887,7 +978,7 @@ TEST(FlTextInputPluginTest, ComposingDelta) {
                   .old_text = "",
                   .delta_text = "Flutter ",
                   .delta_start = 0,
-                  .delta_end = 8,
+                  .delta_end = 0,
                   .selection_base = 8,
                   .selection_extent = 8,
                   .composing_base = 0,
@@ -915,13 +1006,13 @@ TEST(FlTextInputPluginTest, ComposingDelta) {
           build_list({
               build_editing_delta({
                   .old_text = "Flutter ",
-                  .delta_text = "engine",
-                  .delta_start = 8,
+                  .delta_text = "Flutter engine",
+                  .delta_start = 0,
                   .delta_end = 8,
                   .selection_base = 14,
                   .selection_extent = 14,
-                  .composing_base = 0,
-                  .composing_extent = 8,
+                  .composing_base = -1,
+                  .composing_extent = -1,
               }),
           }),
       }}),
@@ -935,7 +1026,7 @@ TEST(FlTextInputPluginTest, ComposingDelta) {
                              FlValueEq(commit)),
                   ::testing::_, ::testing::_, ::testing::_));
 
-  g_signal_emit_by_name(context, "commit", "engine", nullptr);
+  g_signal_emit_by_name(context, "commit", "Flutter engine", nullptr);
 
   // end
   g_autoptr(FlValue) end = build_list({
@@ -944,7 +1035,7 @@ TEST(FlTextInputPluginTest, ComposingDelta) {
           "deltas",
           build_list({
               build_editing_delta({
-                  .delta_text = "Flutter engine",
+                  .old_text = "Flutter engine",
                   .selection_base = 14,
                   .selection_extent = 14,
               }),
@@ -961,4 +1052,242 @@ TEST(FlTextInputPluginTest, ComposingDelta) {
                   ::testing::_, ::testing::_, ::testing::_));
 
   g_signal_emit_by_name(context, "preedit-end", nullptr);
+}
+
+TEST(FlTextInputPluginTest, NonComposingDelta) {
+  ::testing::NiceMock<flutter::testing::MockBinaryMessenger> messenger;
+  ::testing::NiceMock<flutter::testing::MockIMContext> context;
+  ::testing::NiceMock<flutter::testing::MockTextInputViewDelegate> delegate;
+
+  g_autoptr(FlTextInputPlugin) plugin =
+      fl_text_input_plugin_new(messenger, context, delegate);
+  EXPECT_NE(plugin, nullptr);
+
+  // set config
+  g_autoptr(FlValue) args = build_input_config({
+      .client_id = 1,
+      .enable_delta_model = true,
+  });
+  g_autoptr(FlJsonMethodCodec) codec = fl_json_method_codec_new();
+  g_autoptr(GBytes) set_client = fl_method_codec_encode_method_call(
+      FL_METHOD_CODEC(codec), "TextInput.setClient", args, nullptr);
+
+  g_autoptr(FlValue) null = fl_value_new_null();
+  EXPECT_CALL(messenger, fl_binary_messenger_send_response(
+                             ::testing::Eq<FlBinaryMessenger*>(messenger),
+                             ::testing::A<FlBinaryMessengerResponseHandle*>(),
+                             SuccessResponse(null), ::testing::A<GError**>()))
+      .WillOnce(::testing::Return(true));
+
+  messenger.ReceiveMessage("flutter/textinput", set_client);
+
+  // commit F
+  g_autoptr(FlValue) commit = build_list({
+      fl_value_new_int(1),  // client_id
+      build_map({{
+          "deltas",
+          build_list({
+              build_editing_delta({
+                  .old_text = "",
+                  .delta_text = "F",
+                  .delta_start = 0,
+                  .delta_end = 0,
+                  .selection_base = 1,
+                  .selection_extent = 1,
+                  .composing_base = -1,
+                  .composing_extent = -1,
+              }),
+          }),
+      }}),
+  });
+
+  EXPECT_CALL(messenger,
+              fl_binary_messenger_send_on_channel(
+                  ::testing::Eq<FlBinaryMessenger*>(messenger),
+                  ::testing::StrEq("flutter/textinput"),
+                  MethodCall("TextInputClient.updateEditingStateWithDeltas",
+                             FlValueEq(commit)),
+                  ::testing::_, ::testing::_, ::testing::_));
+
+  g_signal_emit_by_name(context, "commit", "F", nullptr);
+
+  // commit l
+  g_autoptr(FlValue) commitL = build_list({
+      fl_value_new_int(1),  // client_id
+      build_map({{
+          "deltas",
+          build_list({
+              build_editing_delta({
+                  .old_text = "F",
+                  .delta_text = "l",
+                  .delta_start = 1,
+                  .delta_end = 1,
+                  .selection_base = 2,
+                  .selection_extent = 2,
+                  .composing_base = -1,
+                  .composing_extent = -1,
+              }),
+          }),
+      }}),
+  });
+
+  EXPECT_CALL(messenger,
+              fl_binary_messenger_send_on_channel(
+                  ::testing::Eq<FlBinaryMessenger*>(messenger),
+                  ::testing::StrEq("flutter/textinput"),
+                  MethodCall("TextInputClient.updateEditingStateWithDeltas",
+                             FlValueEq(commitL)),
+                  ::testing::_, ::testing::_, ::testing::_));
+
+  g_signal_emit_by_name(context, "commit", "l", nullptr);
+
+  // commit u
+  g_autoptr(FlValue) commitU = build_list({
+      fl_value_new_int(1),  // client_id
+      build_map({{
+          "deltas",
+          build_list({
+              build_editing_delta({
+                  .old_text = "Fl",
+                  .delta_text = "u",
+                  .delta_start = 2,
+                  .delta_end = 2,
+                  .selection_base = 3,
+                  .selection_extent = 3,
+                  .composing_base = -1,
+                  .composing_extent = -1,
+              }),
+          }),
+      }}),
+  });
+
+  EXPECT_CALL(messenger,
+              fl_binary_messenger_send_on_channel(
+                  ::testing::Eq<FlBinaryMessenger*>(messenger),
+                  ::testing::StrEq("flutter/textinput"),
+                  MethodCall("TextInputClient.updateEditingStateWithDeltas",
+                             FlValueEq(commitU)),
+                  ::testing::_, ::testing::_, ::testing::_));
+
+  g_signal_emit_by_name(context, "commit", "u", nullptr);
+
+  // commit t
+  g_autoptr(FlValue) commitTa = build_list({
+      fl_value_new_int(1),  // client_id
+      build_map({{
+          "deltas",
+          build_list({
+              build_editing_delta({
+                  .old_text = "Flu",
+                  .delta_text = "t",
+                  .delta_start = 3,
+                  .delta_end = 3,
+                  .selection_base = 4,
+                  .selection_extent = 4,
+                  .composing_base = -1,
+                  .composing_extent = -1,
+              }),
+          }),
+      }}),
+  });
+
+  EXPECT_CALL(messenger,
+              fl_binary_messenger_send_on_channel(
+                  ::testing::Eq<FlBinaryMessenger*>(messenger),
+                  ::testing::StrEq("flutter/textinput"),
+                  MethodCall("TextInputClient.updateEditingStateWithDeltas",
+                             FlValueEq(commitTa)),
+                  ::testing::_, ::testing::_, ::testing::_));
+
+  g_signal_emit_by_name(context, "commit", "t", nullptr);
+
+  // commit t again
+  g_autoptr(FlValue) commitTb = build_list({
+      fl_value_new_int(1),  // client_id
+      build_map({{
+          "deltas",
+          build_list({
+              build_editing_delta({
+                  .old_text = "Flut",
+                  .delta_text = "t",
+                  .delta_start = 4,
+                  .delta_end = 4,
+                  .selection_base = 5,
+                  .selection_extent = 5,
+                  .composing_base = -1,
+                  .composing_extent = -1,
+              }),
+          }),
+      }}),
+  });
+
+  EXPECT_CALL(messenger,
+              fl_binary_messenger_send_on_channel(
+                  ::testing::Eq<FlBinaryMessenger*>(messenger),
+                  ::testing::StrEq("flutter/textinput"),
+                  MethodCall("TextInputClient.updateEditingStateWithDeltas",
+                             FlValueEq(commitTb)),
+                  ::testing::_, ::testing::_, ::testing::_));
+
+  g_signal_emit_by_name(context, "commit", "t", nullptr);
+
+  // commit e
+  g_autoptr(FlValue) commitE = build_list({
+      fl_value_new_int(1),  // client_id
+      build_map({{
+          "deltas",
+          build_list({
+              build_editing_delta({
+                  .old_text = "Flutt",
+                  .delta_text = "e",
+                  .delta_start = 5,
+                  .delta_end = 5,
+                  .selection_base = 6,
+                  .selection_extent = 6,
+                  .composing_base = -1,
+                  .composing_extent = -1,
+              }),
+          }),
+      }}),
+  });
+
+  EXPECT_CALL(messenger,
+              fl_binary_messenger_send_on_channel(
+                  ::testing::Eq<FlBinaryMessenger*>(messenger),
+                  ::testing::StrEq("flutter/textinput"),
+                  MethodCall("TextInputClient.updateEditingStateWithDeltas",
+                             FlValueEq(commitE)),
+                  ::testing::_, ::testing::_, ::testing::_));
+
+  g_signal_emit_by_name(context, "commit", "e", nullptr);
+
+  // commit r
+  g_autoptr(FlValue) commitR = build_list({
+      fl_value_new_int(1),  // client_id
+      build_map({{
+          "deltas",
+          build_list({
+              build_editing_delta({
+                  .old_text = "Flutte",
+                  .delta_text = "r",
+                  .delta_start = 6,
+                  .delta_end = 6,
+                  .selection_base = 7,
+                  .selection_extent = 7,
+                  .composing_base = -1,
+                  .composing_extent = -1,
+              }),
+          }),
+      }}),
+  });
+
+  EXPECT_CALL(messenger,
+              fl_binary_messenger_send_on_channel(
+                  ::testing::Eq<FlBinaryMessenger*>(messenger),
+                  ::testing::StrEq("flutter/textinput"),
+                  MethodCall("TextInputClient.updateEditingStateWithDeltas",
+                             FlValueEq(commitR)),
+                  ::testing::_, ::testing::_, ::testing::_));
+
+  g_signal_emit_by_name(context, "commit", "r", nullptr);
 }

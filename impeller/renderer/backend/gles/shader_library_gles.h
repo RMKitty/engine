@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef FLUTTER_IMPELLER_RENDERER_BACKEND_GLES_SHADER_LIBRARY_GLES_H_
+#define FLUTTER_IMPELLER_RENDERER_BACKEND_GLES_SHADER_LIBRARY_GLES_H_
 
 #include <memory>
 
@@ -30,8 +31,8 @@ class ShaderLibraryGLES final : public ShaderLibrary {
   ShaderFunctionMap functions_ IPLR_GUARDED_BY(functions_mutex_);
   bool is_valid_ = false;
 
-  ShaderLibraryGLES(
-      std::vector<std::shared_ptr<fml::Mapping>> shader_libraries);
+  explicit ShaderLibraryGLES(
+      const std::vector<std::shared_ptr<fml::Mapping>>& shader_libraries);
 
   // |ShaderLibrary|
   std::shared_ptr<const ShaderFunction> GetFunction(std::string_view name,
@@ -43,7 +44,14 @@ class ShaderLibraryGLES final : public ShaderLibrary {
                         std::shared_ptr<fml::Mapping> code,
                         RegistrationCallback callback) override;
 
-  FML_DISALLOW_COPY_AND_ASSIGN(ShaderLibraryGLES);
+  // |ShaderLibrary|
+  void UnregisterFunction(std::string name, ShaderStage stage) override;
+
+  ShaderLibraryGLES(const ShaderLibraryGLES&) = delete;
+
+  ShaderLibraryGLES& operator=(const ShaderLibraryGLES&) = delete;
 };
 
 }  // namespace impeller
+
+#endif  // FLUTTER_IMPELLER_RENDERER_BACKEND_GLES_SHADER_LIBRARY_GLES_H_

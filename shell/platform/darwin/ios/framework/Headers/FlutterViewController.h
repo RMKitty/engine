@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef FLUTTER_FLUTTERVIEWCONTROLLER_H_
-#define FLUTTER_FLUTTERVIEWCONTROLLER_H_
+#ifndef FLUTTER_SHELL_PLATFORM_DARWIN_IOS_FRAMEWORK_HEADERS_FLUTTERVIEWCONTROLLER_H_
+#define FLUTTER_SHELL_PLATFORM_DARWIN_IOS_FRAMEWORK_HEADERS_FLUTTERVIEWCONTROLLER_H_
 
 #import <UIKit/UIKit.h>
 #include <sys/cdefs.h>
@@ -26,6 +26,7 @@ NS_ASSUME_NONNULL_BEGIN
  * with the update.
  */
 FLUTTER_DARWIN_EXPORT
+// NOLINTNEXTLINE(readability-identifier-naming)
 extern NSNotificationName const FlutterSemanticsUpdateNotification;
 
 /**
@@ -197,14 +198,16 @@ FLUTTER_DARWIN_EXPORT
 
 /**
  * Specifies the view to use as a splash screen. Flutter's rendering is asynchronous, so the first
- * frame rendered by the Flutter application might not immediately appear when theFlutter view is
+ * frame rendered by the Flutter application might not immediately appear when the Flutter view is
  * initially placed in the view hierarchy. The splash screen view will be used as
  * a replacement until the first frame is rendered.
  *
  * The view used should be appropriate for multiple sizes; an autoresizing mask to
  * have a flexible width and height will be applied automatically.
+ *
+ * Set to nil to remove the splash screen view.
  */
-@property(strong, nonatomic) UIView* splashScreenView;
+@property(strong, nonatomic, nullable) UIView* splashScreenView;
 
 /**
  * Attempts to set the `splashScreenView` property from the `UILaunchStoryboardName` from the
@@ -254,4 +257,4 @@ FLUTTER_DARWIN_EXPORT
 
 NS_ASSUME_NONNULL_END
 
-#endif  // FLUTTER_FLUTTERVIEWCONTROLLER_H_
+#endif  // FLUTTER_SHELL_PLATFORM_DARWIN_IOS_FRAMEWORK_HEADERS_FLUTTERVIEWCONTROLLER_H_

@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef SHELL_GPU_GPU_SURFACE_GL_SKIA_H_
-#define SHELL_GPU_GPU_SURFACE_GL_SKIA_H_
+#ifndef FLUTTER_SHELL_GPU_GPU_SURFACE_GL_SKIA_H_
+#define FLUTTER_SHELL_GPU_GPU_SURFACE_GL_SKIA_H_
 
 #include <functional>
 #include <memory>
@@ -14,6 +14,8 @@
 #include "flutter/fml/macros.h"
 #include "flutter/fml/memory/weak_ptr.h"
 #include "flutter/shell/gpu/gpu_surface_gl_delegate.h"
+
+#include "third_party/skia/include/core/SkSurface.h"
 #include "third_party/skia/include/gpu/GrDirectContext.h"
 
 namespace flutter {
@@ -25,7 +27,7 @@ class GPUSurfaceGLSkia : public Surface {
   GPUSurfaceGLSkia(GPUSurfaceGLDelegate* delegate, bool render_to_surface);
 
   // Creates a new GL surface reusing an existing GrDirectContext.
-  GPUSurfaceGLSkia(sk_sp<GrDirectContext> gr_context,
+  GPUSurfaceGLSkia(const sk_sp<GrDirectContext>& gr_context,
                    GPUSurfaceGLDelegate* delegate,
                    bool render_to_surface);
 
@@ -60,13 +62,17 @@ class GPUSurfaceGLSkia : public Surface {
       const SkISize& untransformed_size,
       const SkMatrix& root_surface_transformation);
 
-  bool PresentSurface(const SurfaceFrame& frame, SkCanvas* canvas);
+  bool PresentSurface(const SurfaceFrame& frame, DlCanvas* canvas);
 
   GPUSurfaceGLDelegate* delegate_;
   sk_sp<GrDirectContext> context_;
   sk_sp<SkSurface> onscreen_surface_;
   /// FBO backing the current `onscreen_surface_`.
   uint32_t fbo_id_ = 0;
+  // The current FBO's existing damage, as tracked by the GPU surface, delegates
+  // still have an option of overriding this damage with their own in
+  // `GLContextFrameBufferInfo`.
+  std::optional<SkIRect> existing_damage_ = std::nullopt;
   bool context_owner_ = false;
   // TODO(38466): Refactor GPU surface APIs take into account the fact that an
   // external view embedder may want to render to the root surface. This is a
@@ -82,4 +88,4 @@ class GPUSurfaceGLSkia : public Surface {
 
 }  // namespace flutter
 
-#endif  // SHELL_GPU_GPU_SURFACE_GL_SKIA_H_
+#endif  // FLUTTER_SHELL_GPU_GPU_SURFACE_GL_SKIA_H_

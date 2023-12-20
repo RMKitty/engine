@@ -12,7 +12,7 @@ import 'dart:typed_data';
 /// calculated.
 ///
 /// This enum is used by the [Path] constructor
-// must match ordering in //third_party/skia/include/core/SkPathTypes.h
+// must match ordering in //flutter/third_party/skia/include/core/SkPathTypes.h
 enum FillType {
   /// The interior is defined by a non-zero sum of signed edge crossings.
   nonZero,
@@ -22,7 +22,7 @@ enum FillType {
 }
 
 /// A set of operations applied to two paths.
-// Sync with //third_party/skia/include/pathops/SkPathOps.h
+// Sync with //flutter/third_party/skia/include/pathops/SkPathOps.h
 enum PathOp {
   /// Subtracts the second path from the first.
   difference,
@@ -44,7 +44,7 @@ enum PathOp {
 /// The commands used in a [Path] object.
 ///
 /// This enumeration is a subset of the commands that SkPath supports.
-// Sync with //third_party/skia/include/core/SkPathTypes.h
+// Sync with //flutter/third_party/skia/include/core/SkPathTypes.h
 enum PathVerb {
   /// Picks up the pen and moves it without drawing. Uses two point values.
   moveTo,
@@ -131,7 +131,7 @@ class SvgPathProxy implements PathProxy {
 /// [dispose] has been called, this class must not be used again.
 class Path implements PathProxy {
   /// Creates an empty path object with the specified fill type.
-  Path([this.fillType = FillType.nonZero])
+  Path([FillType fillType = FillType.nonZero])
       : _path = _createPathFn(fillType.index);
 
   /// Creates a copy of this path.
@@ -142,7 +142,10 @@ class Path implements PathProxy {
   }
 
   /// The [FillType] of this path.
-  final FillType fillType;
+  FillType get fillType {
+    assert(_path != null);
+    return FillType.values[_getFillTypeFn(_path!)];
+  }
 
   ffi.Pointer<_SkPath>? _path;
   ffi.Pointer<_PathData>? _pathData;
@@ -168,16 +171,12 @@ class Path implements PathProxy {
       switch (verb) {
         case PathVerb.moveTo:
           proxy.moveTo(points[index++], points[index++]);
-          break;
         case PathVerb.lineTo:
           proxy.lineTo(points[index++], points[index++]);
-          break;
         case PathVerb._quadTo:
           assert(false);
-          break;
         case PathVerb._conicTo:
           assert(false);
-          break;
         case PathVerb.cubicTo:
           proxy.cubicTo(
             points[index++],
@@ -187,10 +186,8 @@ class Path implements PathProxy {
             points[index++],
             points[index++],
           );
-          break;
         case PathVerb.close:
           proxy.close();
-          break;
       }
     }
     assert(index == points.length);
@@ -206,7 +203,7 @@ class Path implements PathProxy {
     _updatePathData();
     final int count = _pathData!.ref.verb_count;
     return List<PathVerb>.generate(count, (int index) {
-      return PathVerb.values[_pathData!.ref.verbs.elementAt(index).value];
+      return PathVerb.values[_pathData!.ref.verbs[index]];
     }, growable: false);
   }
 
@@ -306,9 +303,9 @@ final ffi.DynamicLibrary _dylib = () {
   throw UnsupportedError('Unknown platform: ${Platform.operatingSystem}');
 }();
 
-class _SkPath extends ffi.Opaque {}
+final class _SkPath extends ffi.Opaque {}
 
-class _PathData extends ffi.Struct {
+final class _PathData extends ffi.Struct {
   external ffi.Pointer<ffi.Uint8> verbs;
 
   @ffi.Size()
@@ -388,3 +385,9 @@ typedef _destroy_data_type = ffi.Void Function(ffi.Pointer<_PathData>);
 
 final _DestroyDataType _destroyDataFn =
     _dylib.lookupFunction<_destroy_data_type, _DestroyDataType>('DestroyData');
+
+typedef _GetFillTypeType = int Function(ffi.Pointer<_SkPath>);
+typedef _get_fill_type_type = ffi.Int32 Function(ffi.Pointer<_SkPath>);
+
+final _GetFillTypeType _getFillTypeFn =
+    _dylib.lookupFunction<_get_fill_type_type, _GetFillTypeType>('GetFillType');

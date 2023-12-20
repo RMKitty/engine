@@ -5,16 +5,19 @@
 #ifndef FLUTTER_SHELL_PLATFORM_LINUX_FL_ACCESSIBLE_NODE_H_
 #define FLUTTER_SHELL_PLATFORM_LINUX_FL_ACCESSIBLE_NODE_H_
 
-#include <gtk/gtk.h>
+#include <atk/atk.h>
+#include <gio/gio.h>
 
 #include "flutter/shell/platform/embedder/embedder.h"
 #include "flutter/shell/platform/linux/public/flutter_linux/fl_engine.h"
 
 G_BEGIN_DECLS
 
-// ATK doesn't have the g_autoptr macros, so add them manually.
+// ATK g_autoptr macros weren't added until 2.37. Add them manually.
 // https://gitlab.gnome.org/GNOME/atk/-/issues/10
+#if !ATK_CHECK_VERSION(2, 37, 0)
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(AtkObject, g_object_unref)
+#endif
 
 #define FL_TYPE_ACCESSIBLE_NODE fl_accessible_node_get_type()
 G_DECLARE_DERIVABLE_TYPE(FlAccessibleNode,
@@ -42,6 +45,8 @@ struct _FlAccessibleNodeClass {
   void (*set_actions)(FlAccessibleNode* node, FlutterSemanticsAction actions);
   void (*set_value)(FlAccessibleNode* node, const gchar* value);
   void (*set_text_selection)(FlAccessibleNode* node, gint base, gint extent);
+  void (*set_text_direction)(FlAccessibleNode* node,
+                             FlutterTextDirection direction);
 
   void (*perform_action)(FlAccessibleNode* node,
                          FlutterSemanticsAction action,
@@ -147,6 +152,16 @@ void fl_accessible_node_set_value(FlAccessibleNode* node, const gchar* value);
 void fl_accessible_node_set_text_selection(FlAccessibleNode* node,
                                            gint base,
                                            gint extent);
+
+/**
+ * fl_accessible_node_set_text_direction:
+ * @node: an #FlAccessibleNode.
+ * @direction: the direction of the text.
+ *
+ * Sets the text direction of this node.
+ */
+void fl_accessible_node_set_text_direction(FlAccessibleNode* node,
+                                           FlutterTextDirection direction);
 
 /**
  * fl_accessible_node_dispatch_action:

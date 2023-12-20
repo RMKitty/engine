@@ -8,7 +8,6 @@ import 'package:meta/meta.dart';
 
 import '../browser_detection.dart';
 import '../dom.dart';
-import '../safe_browser_api.dart';
 import 'semantics.dart';
 
 /// The maximum [semanticsActivationAttempts] before we give up waiting for
@@ -139,7 +138,7 @@ class DesktopSemanticsEnabler extends SemanticsEnabler {
       return true;
     }
 
-    if (EngineSemanticsOwner.instance.semanticsEnabled) {
+    if (EngineSemantics.instance.semanticsEnabled) {
       // Semantics already enabled, forward to framework as normal.
       return true;
     }
@@ -168,7 +167,7 @@ class DesktopSemanticsEnabler extends SemanticsEnabler {
       return true;
     }
 
-    EngineSemanticsOwner.instance.semanticsEnabled = true;
+    EngineSemantics.instance.semanticsEnabled = true;
     dispose();
     return false;
   }
@@ -180,7 +179,7 @@ class DesktopSemanticsEnabler extends SemanticsEnabler {
 
     // Only listen to "click" because other kinds of events are reported via
     // PointerBinding.
-    placeholder.addEventListener('click', allowInterop((DomEvent event) {
+    placeholder.addEventListener('click', createDomEventListener((DomEvent event) {
       tryEnableSemantics(event);
     }), true);
 
@@ -268,7 +267,7 @@ class MobileSemanticsEnabler extends SemanticsEnabler {
       return true;
     }
 
-    if (EngineSemanticsOwner.instance.semanticsEnabled) {
+    if (EngineSemantics.instance.semanticsEnabled) {
       // Semantics already enabled, forward to framework as normal.
       return true;
     }
@@ -327,17 +326,14 @@ class MobileSemanticsEnabler extends SemanticsEnabler {
       case 'click':
         final DomMouseEvent click = event as DomMouseEvent;
         activationPoint = click.offset;
-        break;
       case 'touchstart':
       case 'touchend':
         final DomTouchEvent touchEvent = event as DomTouchEvent;
-        activationPoint = touchEvent.changedTouches!.first.client;
-        break;
+        activationPoint = touchEvent.changedTouches.first.client;
       case 'pointerdown':
       case 'pointerup':
         final DomPointerEvent touch = event as DomPointerEvent;
         activationPoint = touch.client;
-        break;
       default:
         // The event is not relevant, forward to framework as normal.
         return true;
@@ -345,12 +341,10 @@ class MobileSemanticsEnabler extends SemanticsEnabler {
 
     final DomRect activatingElementRect =
         _semanticsPlaceholder!.getBoundingClientRect();
-    final double midX = (activatingElementRect.left +
-            (activatingElementRect.right - activatingElementRect.left) / 2)
-        .toDouble();
-    final double midY = (activatingElementRect.top +
-            (activatingElementRect.bottom - activatingElementRect.top) / 2)
-        .toDouble();
+    final double midX = activatingElementRect.left +
+            (activatingElementRect.right - activatingElementRect.left) / 2;
+    final double midY = activatingElementRect.top +
+            (activatingElementRect.bottom - activatingElementRect.top) / 2;
     final double deltaX = activationPoint.x.toDouble() - midX;
     final double deltaY = activationPoint.y.toDouble() - midY;
     final double deltaSquared = deltaX * deltaX + deltaY * deltaY;
@@ -363,7 +357,7 @@ class MobileSemanticsEnabler extends SemanticsEnabler {
       _schedulePlaceholderRemoval = true;
       semanticsActivationTimer = Timer(_periodToConsumeEvents, () {
         dispose();
-        EngineSemanticsOwner.instance.semanticsEnabled = true;
+        EngineSemantics.instance.semanticsEnabled = true;
       });
       return false;
     }
@@ -379,7 +373,7 @@ class MobileSemanticsEnabler extends SemanticsEnabler {
 
     // Only listen to "click" because other kinds of events are reported via
     // PointerBinding.
-    placeholder.addEventListener('click', allowInterop((DomEvent event) {
+    placeholder.addEventListener('click', createDomEventListener((DomEvent event) {
       tryEnableSemantics(event);
     }), true);
 

@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef FLUTTER_IMPELLER_PLAYGROUND_WIDGETS_H_
+#define FLUTTER_IMPELLER_PLAYGROUND_WIDGETS_H_
 
 #include <tuple>
 
@@ -22,7 +23,7 @@
     impeller::Point mouse_pos(ImGui::GetMousePos().x, ImGui::GetMousePos().y); \
     static impeller::Point prev_mouse_pos = mouse_pos;                         \
                                                                                \
-    if (ImGui::IsKeyPressed('R')) {                                            \
+    if (ImGui::IsKeyPressed(ImGuiKey_R)) {                                     \
       position = reset_position;                                               \
       dragging = false;                                                        \
     }                                                                          \
@@ -73,3 +74,5 @@
                                                                          \
     std::make_tuple(position_a, position_b);                             \
   })
+
+#endif  // FLUTTER_IMPELLER_PLAYGROUND_WIDGETS_H_

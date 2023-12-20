@@ -41,7 +41,7 @@ namespace flutter {
 ///
 class AndroidShellHolder {
  public:
-  AndroidShellHolder(flutter::Settings settings,
+  AndroidShellHolder(const flutter::Settings& settings,
                      std::shared_ptr<PlatformViewAndroidJNI> jni_facade);
 
   ~AndroidShellHolder();
@@ -103,6 +103,10 @@ class AndroidShellHolder {
     return shell_->GetPlatformMessageHandler();
   }
 
+  void UpdateDisplayMetrics();
+
+  void SetIsRenderingToImageView(bool value);
+
  private:
   const flutter::Settings settings_;
   const std::shared_ptr<PlatformViewAndroidJNI> jni_facade_;
@@ -128,6 +132,7 @@ class AndroidShellHolder {
                      const std::shared_ptr<PlatformViewAndroidJNI>& jni_facade,
                      const std::shared_ptr<ThreadHost>& thread_host,
                      std::unique_ptr<Shell> shell,
+                     std::unique_ptr<APKAssetProvider> apk_asset_provider,
                      const fml::WeakPtr<PlatformViewAndroid>& platform_view);
   static void ThreadDestructCallback(void* value);
   std::optional<RunConfiguration> BuildRunConfiguration(

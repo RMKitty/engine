@@ -10,7 +10,6 @@
 
 #include "flutter/flow/layers/layer_tree.h"
 #include "flutter/lib/ui/dart_wrapper.h"
-#include "third_party/skia/include/core/SkPicture.h"
 
 namespace flutter {
 
@@ -26,7 +25,8 @@ class Scene : public RefCountedDartWrappable<Scene> {
                      bool checkerboardRasterCacheImages,
                      bool checkerboardOffscreenLayers);
 
-  std::unique_ptr<flutter::LayerTree> takeLayerTree();
+  std::unique_ptr<flutter::LayerTree> takeLayerTree(uint64_t width,
+                                                    uint64_t height);
 
   Dart_Handle toImageSync(uint32_t width,
                           uint32_t height,
@@ -34,17 +34,26 @@ class Scene : public RefCountedDartWrappable<Scene> {
 
   Dart_Handle toImage(uint32_t width,
                       uint32_t height,
-                      Dart_Handle image_callback);
+                      Dart_Handle raw_image_handle);
 
   void dispose();
 
  private:
-  explicit Scene(std::shared_ptr<flutter::Layer> rootLayer,
-                 uint32_t rasterizerTracingThreshold,
-                 bool checkerboardRasterCacheImages,
-                 bool checkerboardOffscreenLayers);
+  Scene(std::shared_ptr<flutter::Layer> rootLayer,
+        uint32_t rasterizerTracingThreshold,
+        bool checkerboardRasterCacheImages,
+        bool checkerboardOffscreenLayers);
 
-  std::unique_ptr<flutter::LayerTree> layer_tree_;
+  // Returns true if `dispose()` has not been called.
+  bool valid();
+
+  void RasterizeToImage(uint32_t width,
+                        uint32_t height,
+                        Dart_Handle raw_image_handle);
+
+  std::unique_ptr<LayerTree> BuildLayerTree(uint32_t width, uint32_t height);
+
+  flutter::LayerTree::Config layer_tree_config_;
 };
 
 }  // namespace flutter

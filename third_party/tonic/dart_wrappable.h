@@ -34,11 +34,6 @@ class DartWrappable {
   // Implement using IMPLEMENT_WRAPPERTYPEINFO macro
   virtual const DartWrapperInfo& GetDartWrapperInfo() const = 0;
 
-  // Override this to customize the object size reported to the Dart garbage
-  // collector.
-  // Implement using IMPLEMENT_WRAPPERTYPEINFO macro
-  virtual size_t GetAllocationSize() const;
-
   virtual void RetainDartWrappableReference() const = 0;
 
   virtual void ReleaseDartWrappableReference() const = 0;
@@ -80,14 +75,10 @@ class DartWrappable {
  private:                                                                  \
   static const tonic::DartWrapperInfo& dart_wrapper_info_
 
-#define IMPLEMENT_WRAPPERTYPEINFO(LibraryName, ClassName)       \
-  static const tonic::DartWrapperInfo                           \
-      kDartWrapperInfo_##LibraryName_##ClassName = {            \
-          #LibraryName,                                         \
-          #ClassName,                                           \
-          sizeof(ClassName),                                    \
-  };                                                            \
-  const tonic::DartWrapperInfo& ClassName::dart_wrapper_info_ = \
+#define IMPLEMENT_WRAPPERTYPEINFO(LibraryName, ClassName)                   \
+  static const tonic::DartWrapperInfo                                       \
+      kDartWrapperInfo_##LibraryName_##ClassName(#LibraryName, #ClassName); \
+  const tonic::DartWrapperInfo& ClassName::dart_wrapper_info_ =             \
       kDartWrapperInfo_##LibraryName_##ClassName;
 
 struct DartConverterWrappable {
@@ -102,7 +93,7 @@ struct DartConverter<
     T*,
     typename std::enable_if<
         std::is_convertible<T*, const DartWrappable*>::value>::type> {
-  using FfiType = T*;
+  using FfiType = DartWrappable*;
   static constexpr const char* kFfiRepresentation = "Pointer";
   static constexpr const char* kDartRepresentation = "Pointer";
   static constexpr bool kAllowedInLeafCall = true;
@@ -154,7 +145,7 @@ struct DartConverter<
         DartConverterWrappable::FromArguments(args, index, exception));
   }
 
-  static T* FromFfi(FfiType val) { return val; }
+  static T* FromFfi(FfiType val) { return static_cast<T*>(val); }
   static FfiType ToFfi(T* val) { return val; }
   static const char* GetFfiRepresentation() { return kFfiRepresentation; }
   static const char* GetDartRepresentation() { return kDartRepresentation; }

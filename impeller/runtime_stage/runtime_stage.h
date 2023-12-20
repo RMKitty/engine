@@ -2,55 +2,33 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef FLUTTER_IMPELLER_RUNTIME_STAGE_RUNTIME_STAGE_H_
+#define FLUTTER_IMPELLER_RUNTIME_STAGE_RUNTIME_STAGE_H_
 
 #include <memory>
 #include <string>
 
 #include "flutter/fml/macros.h"
 #include "flutter/fml/mapping.h"
-#include "impeller/renderer/shader_function.h"
-#include "impeller/renderer/shader_types.h"
+
+#include "flutter/impeller/core/runtime_types.h"
+#include "runtime_stage_types_flatbuffers.h"
 
 namespace impeller {
 
-enum RuntimeUniformType {
-  kBoolean,
-  kSignedByte,
-  kUnsignedByte,
-  kSignedShort,
-  kUnsignedShort,
-  kSignedInt,
-  kUnsignedInt,
-  kSignedInt64,
-  kUnsignedInt64,
-  kHalfFloat,
-  kFloat,
-  kDouble,
-  kSampledImage,
-};
-
-struct RuntimeUniformDimensions {
-  size_t rows = 0;
-  size_t cols = 0;
-};
-
-struct RuntimeUniformDescription {
-  std::string name;
-  size_t location = 0u;
-  RuntimeUniformType type = kFloat;
-  RuntimeUniformDimensions dimensions;
-};
-
 class RuntimeStage {
  public:
-  RuntimeStage(std::shared_ptr<fml::Mapping> payload);
+  explicit RuntimeStage(std::shared_ptr<fml::Mapping> payload);
+
+  explicit RuntimeStage(const fb::RuntimeStage* runtime_stage);
 
   ~RuntimeStage();
+  RuntimeStage(RuntimeStage&&);
+  RuntimeStage& operator=(RuntimeStage&&);
 
   bool IsValid() const;
 
-  ShaderStage GetShaderStage() const;
+  RuntimeShaderStage GetShaderStage() const;
 
   const std::vector<RuntimeUniformDescription>& GetUniforms() const;
 
@@ -60,15 +38,29 @@ class RuntimeStage {
 
   const std::shared_ptr<fml::Mapping>& GetCodeMapping() const;
 
+  const std::shared_ptr<fml::Mapping>& GetSkSLMapping() const;
+
+  bool IsDirty() const;
+
+  void SetClean();
+
  private:
-  ShaderStage stage_ = ShaderStage::kUnknown;
+  RuntimeShaderStage stage_ = RuntimeShaderStage::kVertex;
   std::shared_ptr<fml::Mapping> payload_;
   std::string entrypoint_;
   std::shared_ptr<fml::Mapping> code_mapping_;
+  std::shared_ptr<fml::Mapping> sksl_mapping_;
   std::vector<RuntimeUniformDescription> uniforms_;
   bool is_valid_ = false;
+  bool is_dirty_ = true;
 
-  FML_DISALLOW_COPY_AND_ASSIGN(RuntimeStage);
+  void Setup(const fb::RuntimeStage* runtime_stage);
+
+  RuntimeStage(const RuntimeStage&) = delete;
+
+  RuntimeStage& operator=(const RuntimeStage&) = delete;
 };
 
 }  // namespace impeller
+
+#endif  // FLUTTER_IMPELLER_RUNTIME_STAGE_RUNTIME_STAGE_H_

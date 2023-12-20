@@ -4,7 +4,7 @@
 
 import 'package:ui/ui.dart' as ui;
 
-import '../../engine.dart' show kProfilePrerollFrame, kProfileApplyFrame;
+import '../../engine.dart' show kProfileApplyFrame, kProfilePrerollFrame;
 import '../profiler.dart';
 import '../vector_math.dart';
 import 'canvas.dart';
@@ -20,9 +20,6 @@ class LayerTree {
 
   /// The root of the layer tree.
   final RootLayer rootLayer;
-
-  /// The size (in physical pixels) of the frame to paint this layer tree into.
-  final ui.Size frameSize = ui.window.physicalSize;
 
   /// The devicePixelRatio of the frame to paint this layer tree into.
   double? devicePixelRatio;
@@ -51,8 +48,6 @@ class LayerTree {
     final Iterable<CkCanvas> overlayCanvases =
         frame.viewEmbedder!.getOverlayCanvases();
     overlayCanvases.forEach(internalNodesCanvas.addCanvas);
-    // Clear the canvases before painting
-    internalNodesCanvas.clear(const ui.Color(0x00000000));
     final PaintContext context = PaintContext(
       internalNodesCanvas,
       frame.canvas,
@@ -67,9 +62,9 @@ class LayerTree {
   /// Flattens the tree into a single [ui.Picture].
   ///
   /// This picture does not contain any platform views.
-  ui.Picture flatten() {
+  ui.Picture flatten(ui.Size size) {
     final CkPictureRecorder recorder = CkPictureRecorder();
-    final CkCanvas canvas = recorder.beginRecording(ui.Rect.largest);
+    final CkCanvas canvas = recorder.beginRecording(ui.Offset.zero & size);
     final PrerollContext prerollContext = PrerollContext(null, null);
     rootLayer.preroll(prerollContext, Matrix4.identity());
 
@@ -86,6 +81,8 @@ class LayerTree {
 
 /// A single frame to be rendered.
 class Frame {
+  Frame(this.canvas, this.rasterCache, this.viewEmbedder);
+
   /// The canvas to render this frame to.
   final CkCanvas canvas;
 
@@ -94,8 +91,6 @@ class Frame {
 
   /// The platform view embedder.
   final HtmlViewEmbedder? viewEmbedder;
-
-  Frame(this.canvas, this.rasterCache, this.viewEmbedder);
 
   /// Rasterize the given layer tree into this frame.
   bool raster(LayerTree layerTree, {bool ignoreRasterCache = false}) {

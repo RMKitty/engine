@@ -2,27 +2,38 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef FLUTTER_IMPELLER_RENDERER_SNAPSHOT_H_
+#define FLUTTER_IMPELLER_RENDERER_SNAPSHOT_H_
 
 #include <functional>
 #include <memory>
 #include <vector>
 
 #include "flutter/fml/macros.h"
+#include "impeller/core/formats.h"
+#include "impeller/core/sampler_descriptor.h"
+#include "impeller/core/texture.h"
 #include "impeller/geometry/matrix.h"
 #include "impeller/geometry/rect.h"
-#include "impeller/renderer/texture.h"
 
 namespace impeller {
 
 class ContentContext;
 class Entity;
 
-/// Represents a texture and its intended draw position.
+/// Represents a texture and its intended draw transform/sampler configuration.
 struct Snapshot {
   std::shared_ptr<Texture> texture;
   /// The transform that should be applied to this texture for rendering.
   Matrix transform;
+
+  SamplerDescriptor sampler_descriptor =
+      SamplerDescriptor("Default Snapshot Sampler",
+                        MinMagFilter::kLinear,
+                        MinMagFilter::kLinear,
+                        MipFilter::kNearest);
+
+  Scalar opacity = 1.0f;
 
   std::optional<Rect> GetCoverage() const;
 
@@ -37,3 +48,5 @@ struct Snapshot {
 };
 
 }  // namespace impeller
+
+#endif  // FLUTTER_IMPELLER_RENDERER_SNAPSHOT_H_

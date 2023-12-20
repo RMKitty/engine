@@ -4,7 +4,13 @@
 
 #include "impeller/renderer/backend/metal/pipeline_library_mtl.h"
 
+#include <Foundation/Foundation.h>
+#include <Metal/Metal.h>
+
+#include "flutter/fml/build_config.h"
+#include "flutter/fml/container.h"
 #include "impeller/base/promise.h"
+#include "impeller/renderer/backend/metal/compute_pipeline_mtl.h"
 #include "impeller/renderer/backend/metal/formats_mtl.h"
 #include "impeller/renderer/backend/metal/pipeline_mtl.h"
 #include "impeller/renderer/backend/metal/shader_function_mtl.h"
@@ -17,27 +23,20 @@ PipelineLibraryMTL::PipelineLibraryMTL(id<MTLDevice> device)
 
 PipelineLibraryMTL::~PipelineLibraryMTL() = default;
 
-static MTLRenderPipelineDescriptor* GetMTLRenderPipelineDescriptor(
-    const PipelineDescriptor& desc) {
+using Callback = std::function<void(MTLRenderPipelineDescriptor*)>;
+
+static void GetMTLRenderPipelineDescriptor(const PipelineDescriptor& desc,
+                                           const Callback& callback) {
   auto descriptor = [[MTLRenderPipelineDescriptor alloc] init];
   descriptor.label = @(desc.GetLabel().c_str());
-  descriptor.sampleCount = static_cast<NSUInteger>(desc.GetSampleCount());
-
-  for (const auto& entry : desc.GetStageEntrypoints()) {
-    if (entry.first == ShaderStage::kVertex) {
-      descriptor.vertexFunction =
-          ShaderFunctionMTL::Cast(*entry.second).GetMTLFunction();
-    }
-    if (entry.first == ShaderStage::kFragment) {
-      descriptor.fragmentFunction =
-          ShaderFunctionMTL::Cast(*entry.second).GetMTLFunction();
-    }
-  }
+  descriptor.rasterSampleCount = static_cast<NSUInteger>(desc.GetSampleCount());
+  bool created_specialized_function = false;
 
   if (const auto& vertex_descriptor = desc.GetVertexDescriptor()) {
     VertexDescriptorMTL vertex_descriptor_mtl;
-    if (vertex_descriptor_mtl.SetStageInputs(
-            vertex_descriptor->GetStageInputs())) {
+    if (vertex_descriptor_mtl.SetStageInputsAndLayout(
+            vertex_descriptor->GetStageInputs(),
+            vertex_descriptor->GetStageLayouts())) {
       descriptor.vertexDescriptor =
           vertex_descriptor_mtl.GetMTLVertexDescriptor();
     }
@@ -53,6 +52,41 @@ static MTLRenderPipelineDescriptor* GetMTLRenderPipelineDescriptor(
   descriptor.stencilAttachmentPixelFormat =
       ToMTLPixelFormat(desc.GetStencilPixelFormat());
 
+  const auto& constants = desc.GetSpecializationConstants();
+  for (const auto& entry : desc.GetStageEntrypoints()) {
+    if (entry.first == ShaderStage::kVertex) {
+      descriptor.vertexFunction =
+          ShaderFunctionMTL::Cast(*entry.second).GetMTLFunction();
+    }
+    if (entry.first == ShaderStage::kFragment) {
+      if (constants.empty()) {
+        descriptor.fragmentFunction =
+            ShaderFunctionMTL::Cast(*entry.second).GetMTLFunction();
+      } else {
+        // This code only expects a single specialized function per pipeline.
+        FML_CHECK(!created_specialized_function);
+        created_specialized_function = true;
+        ShaderFunctionMTL::Cast(*entry.second)
+            .GetMTLFunctionSpecialized(
+                constants, [callback, descriptor](id<MTLFunction> function) {
+                  descriptor.fragmentFunction = function;
+                  callback(descriptor);
+                });
+      }
+    }
+  }
+
+  if (!created_specialized_function) {
+    callback(descriptor);
+  }
+}
+
+static MTLComputePipelineDescriptor* GetMTLComputePipelineDescriptor(
+    const ComputePipelineDescriptor& desc) {
+  auto descriptor = [[MTLComputePipelineDescriptor alloc] init];
+  descriptor.label = @(desc.GetLabel().c_str());
+  descriptor.computeFunction =
+      ShaderFunctionMTL::Cast(*desc.GetStageEntrypoint()).GetMTLFunction();
   return descriptor;
 }
 
@@ -74,26 +108,86 @@ bool PipelineLibraryMTL::IsValid() const {
 }
 
 // |PipelineLibrary|
-PipelineFuture PipelineLibraryMTL::GetRenderPipeline(
+PipelineFuture<PipelineDescriptor> PipelineLibraryMTL::GetPipeline(
     PipelineDescriptor descriptor) {
   if (auto found = pipelines_.find(descriptor); found != pipelines_.end()) {
     return found->second;
   }
 
   if (!IsValid()) {
-    return RealizedFuture<std::shared_ptr<Pipeline>>(nullptr);
+    return {
+        descriptor,
+        RealizedFuture<std::shared_ptr<Pipeline<PipelineDescriptor>>>(nullptr)};
   }
 
-  auto promise = std::make_shared<std::promise<std::shared_ptr<Pipeline>>>();
-  auto future = PipelineFuture{promise->get_future()};
-  pipelines_[descriptor] = future;
+  auto promise = std::make_shared<
+      std::promise<std::shared_ptr<Pipeline<PipelineDescriptor>>>>();
+  auto pipeline_future =
+      PipelineFuture<PipelineDescriptor>{descriptor, promise->get_future()};
+  pipelines_[descriptor] = pipeline_future;
   auto weak_this = weak_from_this();
 
   auto completion_handler =
       ^(id<MTLRenderPipelineState> _Nullable render_pipeline_state,
         NSError* _Nullable error) {
         if (error != nil) {
-          VALIDATION_LOG << "Could not create render pipeline: "
+          VALIDATION_LOG << "Could not create render pipeline for "
+                         << descriptor.GetLabel() << " :"
+                         << error.localizedDescription.UTF8String;
+          promise->set_value(nullptr);
+          return;
+        }
+
+        auto strong_this = weak_this.lock();
+        if (!strong_this) {
+          promise->set_value(nullptr);
+          return;
+        }
+
+        auto new_pipeline = std::shared_ptr<PipelineMTL>(new PipelineMTL(
+            weak_this,
+            descriptor,                                        //
+            render_pipeline_state,                             //
+            CreateDepthStencilDescriptor(descriptor, device_)  //
+            ));
+        promise->set_value(new_pipeline);
+      };
+  GetMTLRenderPipelineDescriptor(
+      descriptor, [device = device_, completion_handler](
+                      MTLRenderPipelineDescriptor* descriptor) {
+        [device newRenderPipelineStateWithDescriptor:descriptor
+                                   completionHandler:completion_handler];
+      });
+  return pipeline_future;
+}
+
+PipelineFuture<ComputePipelineDescriptor> PipelineLibraryMTL::GetPipeline(
+    ComputePipelineDescriptor descriptor) {
+  if (auto found = compute_pipelines_.find(descriptor);
+      found != compute_pipelines_.end()) {
+    return found->second;
+  }
+
+  if (!IsValid()) {
+    return {
+        descriptor,
+        RealizedFuture<std::shared_ptr<Pipeline<ComputePipelineDescriptor>>>(
+            nullptr)};
+  }
+
+  auto promise = std::make_shared<
+      std::promise<std::shared_ptr<Pipeline<ComputePipelineDescriptor>>>>();
+  auto pipeline_future = PipelineFuture<ComputePipelineDescriptor>{
+      descriptor, promise->get_future()};
+  compute_pipelines_[descriptor] = pipeline_future;
+  auto weak_this = weak_from_this();
+
+  auto completion_handler =
+      ^(id<MTLComputePipelineState> _Nullable compute_pipeline_state,
+        MTLComputePipelineReflection* _Nullable reflection,
+        NSError* _Nullable error) {
+        if (error != nil) {
+          VALIDATION_LOG << "Could not create compute pipeline: "
                          << error.localizedDescription.UTF8String;
           promise->set_value(nullptr);
           return;
@@ -107,18 +201,28 @@ PipelineFuture PipelineLibraryMTL::GetRenderPipeline(
           return;
         }
 
-        auto new_pipeline = std::shared_ptr<PipelineMTL>(new PipelineMTL(
-            weak_this,
-            descriptor,                                        //
-            render_pipeline_state,                             //
-            CreateDepthStencilDescriptor(descriptor, device_)  //
-            ));
+        auto new_pipeline = std::shared_ptr<ComputePipelineMTL>(
+            new ComputePipelineMTL(weak_this,
+                                   descriptor,             //
+                                   compute_pipeline_state  //
+                                   ));
         promise->set_value(new_pipeline);
       };
-  [device_ newRenderPipelineStateWithDescriptor:GetMTLRenderPipelineDescriptor(
-                                                    descriptor)
-                              completionHandler:completion_handler];
-  return future;
+  [device_
+      newComputePipelineStateWithDescriptor:GetMTLComputePipelineDescriptor(
+                                                descriptor)
+                                    options:MTLPipelineOptionNone
+                          completionHandler:completion_handler];
+  return pipeline_future;
+}
+
+// |PipelineLibrary|
+void PipelineLibraryMTL::RemovePipelinesWithEntryPoint(
+    std::shared_ptr<const ShaderFunction> function) {
+  fml::erase_if(pipelines_, [&](auto item) {
+    return item->first.GetEntrypointForStage(function->GetStage())
+        ->IsEqual(*function);
+  });
 }
 
 }  // namespace impeller

@@ -15,6 +15,8 @@ import 'common.dart';
 import 'environment.dart';
 import 'exceptions.dart';
 
+const String _chromeExecutableVar = 'CHROME_EXECUTABLE';
+
 /// Returns the installation of Chrome, installing it if necessary.
 ///
 /// If [requestedVersion] is null, uses the version specified on the
@@ -32,6 +34,18 @@ Future<BrowserInstallation> getOrInstallChrome(
   StringSink? infoLog,
 }) async {
   infoLog ??= io.stdout;
+
+  // When running on LUCI, if we specify the "chrome_and_driver" dependency,
+  // then the bot will download Chrome from CIPD and place it in a cache and
+  // set the environment variable CHROME_EXECUTABLE.
+  if (io.Platform.environment.containsKey(_chromeExecutableVar)) {
+    infoLog.writeln('Using Chrome from $_chromeExecutableVar variable: '
+      '${io.Platform.environment[_chromeExecutableVar]}');
+    return BrowserInstallation(
+      version: 'cipd',
+      executable: io.Platform.environment[_chromeExecutableVar]!,
+    );
+  }
 
   if (requestedVersion == 'system') {
     return BrowserInstallation(
@@ -100,16 +114,16 @@ class ChromeInstaller {
     );
   }
 
-  static Future<ChromeInstaller> latest() async {
-    final String latestVersion = await fetchLatestChromeVersion();
-    return ChromeInstaller(version: latestVersion);
-  }
-
   ChromeInstaller._({
     required this.version,
     required this.chromeInstallationDir,
     required this.versionDir,
   });
+
+  static Future<ChromeInstaller> latest() async {
+    final String latestVersion = await fetchLatestChromeVersion();
+    return ChromeInstaller(version: latestVersion);
+  }
 
   /// Chrome version managed by this installer.
   final String version;
@@ -166,7 +180,7 @@ class ChromeInstaller {
     /// Windows LUCI bots does not have a `unzip`. Instead we are
     /// using `archive` pub package.
     ///
-    /// We didn't use `archieve` on Mac/Linux since the new files have
+    /// We didn't use `archive` on Mac/Linux since the new files have
     /// permission issues. For now we are not able change file permissions
     /// from dart.
     /// See: https://github.com/dart-lang/sdk/issues/15078.
@@ -196,7 +210,8 @@ class ChromeInstaller {
 
       stopwatch.stop();
       print(
-          'INFO: The unzip took ${stopwatch.elapsedMilliseconds ~/ 1000} seconds.');
+        'The unzip took ${stopwatch.elapsedMilliseconds ~/ 1000} seconds.'
+      );
     } else {
       // We have to unzip into a temporary directory and then copy the files
       // out because our tests expect the files to be direct children of the
@@ -204,7 +219,7 @@ class ChromeInstaller {
       // named e.g. 'chrome-linux'. We need to copy the files out of that
       // directory and into the version directory.
       final io.Directory tmpDir = await io.Directory.systemTemp.createTemp();
-      final io.Directory unzipDir = io.Platform.isLinux ? tmpDir : versionDir;
+      final io.Directory unzipDir = tmpDir;
       final io.ProcessResult unzipResult =
           await io.Process.run('unzip', <String>[
         downloadedFile.path,
@@ -218,17 +233,13 @@ class ChromeInstaller {
             'The unzip process exited with code ${unzipResult.exitCode}.');
       }
 
-      // Remove the "chrome-linux/" path prefix, which is the Linux
-      // convention for Chromium directory structure.
-      if (io.Platform.isLinux) {
-        final io.Directory chromeLinuxDir =
-            await tmpDir.list().single as io.Directory;
-        await for (final io.FileSystemEntity entity in chromeLinuxDir.list()) {
-          await entity
-              .rename(path.join(versionDir.path, path.basename(entity.path)));
-        }
-        await tmpDir.delete(recursive: true);
+      final io.Directory topLevelDir =
+          await tmpDir.list().single as io.Directory;
+      await for (final io.FileSystemEntity entity in topLevelDir.list()) {
+        await entity
+            .rename(path.join(versionDir.path, path.basename(entity.path)));
       }
+      await tmpDir.delete(recursive: true);
     }
 
     downloadedFile.deleteSync();

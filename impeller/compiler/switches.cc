@@ -4,10 +4,14 @@
 
 #include "impeller/compiler/switches.h"
 
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <map>
 
 #include "flutter/fml/file.h"
+#include "impeller/compiler/types.h"
+#include "impeller/compiler/utilities.h"
 
 namespace impeller {
 namespace compiler {
@@ -18,17 +22,15 @@ static const std::map<std::string, TargetPlatform> kKnownPlatforms = {
     {"vulkan", TargetPlatform::kVulkan},
     {"opengl-es", TargetPlatform::kOpenGLES},
     {"opengl-desktop", TargetPlatform::kOpenGLDesktop},
-    {"flutter-spirv", TargetPlatform::kFlutterSPIRV},
     {"sksl", TargetPlatform::kSkSL},
     {"runtime-stage-metal", TargetPlatform::kRuntimeStageMetal},
     {"runtime-stage-gles", TargetPlatform::kRuntimeStageGLES},
+    {"runtime-stage-vulkan", TargetPlatform::kRuntimeStageVulkan},
 };
 
 static const std::map<std::string, SourceType> kKnownSourceTypes = {
     {"vert", SourceType::kVertexShader},
     {"frag", SourceType::kFragmentShader},
-    {"tesc", SourceType::kTessellationControlShader},
-    {"tese", SourceType::kTessellationEvaluationShader},
     {"comp", SourceType::kComputeShader},
 };
 
@@ -44,14 +46,25 @@ void Switches::PrintHelp(std::ostream& stream) {
     stream << " --" << platform.first;
   }
   stream << " ]" << std::endl;
-  stream << "--input=<glsl_file>" << std::endl;
-  stream << "[optional] --input-kind={";
+  stream << "--input=<source_file>" << std::endl;
+  stream << "[optional] --input-type={";
   for (const auto& source_type : kKnownSourceTypes) {
     stream << source_type.first << ", ";
   }
   stream << "}" << std::endl;
   stream << "--sl=<sl_output_file>" << std::endl;
-  stream << "--spirv=<spirv_output_file>" << std::endl;
+  stream << "--spirv=<spirv_output_file> (ignored for --shader-bundle)"
+         << std::endl;
+  stream << "[optional] --source-language=glsl|hlsl (default: glsl)"
+         << std::endl;
+  stream << "[optional] --entry-point=<entry_point_name> (default: main; "
+            "ignored for glsl)"
+         << std::endl;
+  stream << "[optional] --iplr (causes --sl file to be emitted in iplr format)"
+         << std::endl;
+  stream << "[optional] --shader-bundle=<bundle_spec> (causes --sl file to be "
+            "emitted in Flutter GPU's shader bundle format)"
+         << std::endl;
   stream << "[optional] --reflection-json=<reflection_json_file>" << std::endl;
   stream << "[optional] --reflection-header=<reflection_header_file>"
          << std::endl;
@@ -59,6 +72,12 @@ void Switches::PrintHelp(std::ostream& stream) {
   stream << "[optional,multiple] --include=<include_directory>" << std::endl;
   stream << "[optional,multiple] --define=<define>" << std::endl;
   stream << "[optional] --depfile=<depfile_path>" << std::endl;
+  stream << "[optional] --gles-language-version=<number>" << std::endl;
+  stream << "[optional] --json" << std::endl;
+  stream << "[optional] --use-half-textures (force openGL semantics when "
+            "targeting metal)"
+         << std::endl;
+  stream << "[optional] --require-framebuffer-fetch" << std::endl;
 }
 
 Switches::Switches() = default;
@@ -97,12 +116,15 @@ static SourceType SourceTypeFromCommandLine(
 Switches::Switches(const fml::CommandLine& command_line)
     : target_platform(TargetPlatformFromCommandLine(command_line)),
       working_directory(std::make_shared<fml::UniqueFD>(fml::OpenDirectory(
-          ToUtf8(std::filesystem::current_path().native()).c_str(),
+          Utf8FromPath(std::filesystem::current_path()).c_str(),
           false,  // create if necessary,
           fml::FilePermission::kRead))),
       source_file_name(command_line.GetOptionValueWithDefault("input", "")),
       input_type(SourceTypeFromCommandLine(command_line)),
       sl_file_name(command_line.GetOptionValueWithDefault("sl", "")),
+      iplr(command_line.HasOption("iplr")),
+      shader_bundle(
+          command_line.GetOptionValueWithDefault("shader-bundle", "")),
       spirv_file_name(command_line.GetOptionValueWithDefault("spirv", "")),
       reflection_json_name(
           command_line.GetOptionValueWithDefault("reflection-json", "")),
@@ -110,7 +132,23 @@ Switches::Switches(const fml::CommandLine& command_line)
           command_line.GetOptionValueWithDefault("reflection-header", "")),
       reflection_cc_name(
           command_line.GetOptionValueWithDefault("reflection-cc", "")),
-      depfile_path(command_line.GetOptionValueWithDefault("depfile", "")) {
+      depfile_path(command_line.GetOptionValueWithDefault("depfile", "")),
+      json_format(command_line.HasOption("json")),
+      gles_language_version(
+          stoi(command_line.GetOptionValueWithDefault("gles-language-version",
+                                                      "0"))),
+      metal_version(
+          command_line.GetOptionValueWithDefault("metal-version", "1.2")),
+      entry_point(
+          command_line.GetOptionValueWithDefault("entry-point", "main")),
+      use_half_textures(command_line.HasOption("use-half-textures")),
+      require_framebuffer_fetch(
+          command_line.HasOption("require-framebuffer-fetch")) {
+  auto language = ToLowerCase(
+      command_line.GetOptionValueWithDefault("source-language", "glsl"));
+
+  source_language = ToSourceLanguage(language);
+
   if (!working_directory || !working_directory->is_valid()) {
     return;
   }
@@ -122,12 +160,22 @@ Switches::Switches(const fml::CommandLine& command_line)
 
     // fml::OpenDirectoryReadOnly for Windows doesn't handle relative paths
     // beginning with `../` well, so we build an absolute path.
-    auto include_dir_absolute =
-        ToUtf8(std::filesystem::absolute(std::filesystem::current_path() /
-                                         include_dir_path)
-                   .native());
+
+    // Get the current working directory as a utf8 encoded string.
+    // Note that the `include_dir_path` is already utf8 encoded, and so we
+    // mustn't attempt to double-convert it to utf8 lest multi-byte characters
+    // will become mangled.
+    std::filesystem::path include_dir_absolute;
+    if (std::filesystem::path(include_dir_path).is_absolute()) {
+      include_dir_absolute = std::filesystem::path(include_dir_path);
+    } else {
+      auto cwd = Utf8FromPath(std::filesystem::current_path());
+      include_dir_absolute = std::filesystem::absolute(
+          std::filesystem::path(cwd) / include_dir_path);
+    }
+
     auto dir = std::make_shared<fml::UniqueFD>(fml::OpenDirectoryReadOnly(
-        *working_directory, include_dir_absolute.c_str()));
+        *working_directory, include_dir_absolute.string().c_str()));
     if (!dir || !dir->is_valid()) {
       continue;
     }
@@ -145,31 +193,52 @@ Switches::Switches(const fml::CommandLine& command_line)
 }
 
 bool Switches::AreValid(std::ostream& explain) const {
+  // When producing a shader bundle, all flags related to single shader inputs
+  // and outputs such as `--input` and `--spirv-file-name` are ignored. Instead,
+  // input files are read from the shader bundle spec and a single flatbuffer
+  // containing all compiled shaders and reflection state is output to `--sl`.
+  const bool shader_bundle_mode = !shader_bundle.empty();
+
   bool valid = true;
   if (target_platform == TargetPlatform::kUnknown) {
     explain << "The target platform (only one) was not specified." << std::endl;
     valid = false;
   }
 
-  if (!working_directory || !working_directory->is_valid()) {
-    explain << "Could not figure out working directory." << std::endl;
+  if (source_language == SourceLanguage::kUnknown) {
+    explain << "Invalid source language type." << std::endl;
     valid = false;
   }
 
-  if (source_file_name.empty()) {
+  if (!working_directory || !working_directory->is_valid()) {
+    explain << "Could not open the working directory: \""
+            << Utf8FromPath(std::filesystem::current_path()).c_str() << "\""
+            << std::endl;
+    valid = false;
+  }
+
+  if (source_file_name.empty() && !shader_bundle_mode) {
     explain << "Input file name was empty." << std::endl;
     valid = false;
   }
 
-  if (sl_file_name.empty() && TargetPlatformNeedsSL(target_platform)) {
+  if (sl_file_name.empty()) {
     explain << "Target shading language file name was empty." << std::endl;
     valid = false;
   }
 
-  if (spirv_file_name.empty()) {
+  if (spirv_file_name.empty() && !shader_bundle_mode) {
     explain << "Spirv file name was empty." << std::endl;
     valid = false;
   }
+
+  if (iplr && shader_bundle_mode) {
+    explain << "--iplr and --shader-bundle flag cannot be specified at the "
+               "same time"
+            << std::endl;
+    valid = false;
+  }
+
   return valid;
 }
 

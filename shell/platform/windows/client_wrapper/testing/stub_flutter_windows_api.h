@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef FLUTTER_SHELL_PLATFORM_WINDOWS_WRAPPER_TESTING_STUB_FLUTTER_WINDOWS_API_H_
-#define FLUTTER_SHELL_PLATFORM_WINDOWS_WRAPPER_TESTING_STUB_FLUTTER_WINDOWS_API_H_
+#ifndef FLUTTER_SHELL_PLATFORM_WINDOWS_CLIENT_WRAPPER_TESTING_STUB_FLUTTER_WINDOWS_API_H_
+#define FLUTTER_SHELL_PLATFORM_WINDOWS_CLIENT_WRAPPER_TESTING_STUB_FLUTTER_WINDOWS_API_H_
 
 #include <memory>
 
@@ -38,6 +38,9 @@ class StubFlutterWindowsApi {
   // Called for FlutterDesktopViewControllerDestroy.
   virtual void ViewControllerDestroy() {}
 
+  // Called for FlutterDesktopViewControllerForceRedraw.
+  virtual void ViewControllerForceRedraw() {}
+
   // Called for FlutterDesktopViewControllerHandleTopLevelWindowProc.
   virtual bool ViewControllerHandleTopLevelWindowProc(HWND hwnd,
                                                       UINT message,
@@ -62,11 +65,20 @@ class StubFlutterWindowsApi {
   // Called for FlutterDesktopEngineProcessMessages.
   virtual uint64_t EngineProcessMessages() { return 0; }
 
+  // Called for FlutterDesktopEngineSetNextFrameCallback.
+  virtual void EngineSetNextFrameCallback(VoidCallback callback,
+                                          void* user_data) {}
+
   // Called for FlutterDesktopEngineReloadSystemFonts.
   virtual void EngineReloadSystemFonts() {}
 
   // Called for FlutterDesktopViewGetHWND.
   virtual HWND ViewGetHWND() { return reinterpret_cast<HWND>(1); }
+
+  // Called for FlutterDesktopViewGetGraphicsAdapter.
+  virtual IDXGIAdapter* ViewGetGraphicsAdapter() {
+    return reinterpret_cast<IDXGIAdapter*>(2);
+  }
 
   // Called for FlutterDesktopPluginRegistrarRegisterTopLevelWindowProcDelegate.
   virtual void PluginRegistrarRegisterTopLevelWindowProcDelegate(
@@ -77,6 +89,17 @@ class StubFlutterWindowsApi {
   // FlutterDesktopPluginRegistrarUnregisterTopLevelWindowProcDelegate.
   virtual void PluginRegistrarUnregisterTopLevelWindowProcDelegate(
       FlutterDesktopWindowProcCallback delegate) {}
+
+  // Called for FlutterDesktopEngineProcessExternalWindowMessage.
+  virtual bool EngineProcessExternalWindowMessage(
+      FlutterDesktopEngineRef engine,
+      HWND hwnd,
+      UINT message,
+      WPARAM wparam,
+      LPARAM lparam,
+      LRESULT* result) {
+    return false;
+  }
 };
 
 // A test helper that owns a stub implementation, making it the test stub for

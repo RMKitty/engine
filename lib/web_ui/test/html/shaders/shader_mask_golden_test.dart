@@ -5,15 +5,21 @@
 import 'package:test/bootstrap/browser.dart';
 import 'package:test/test.dart';
 import 'package:ui/src/engine.dart'
-    hide ClipRectEngineLayer, BackdropFilterEngineLayer;
+    hide BackdropFilterEngineLayer, ClipRectEngineLayer;
 import 'package:ui/ui.dart';
 
 import 'package:web_engine_tester/golden_tester.dart';
+
+import '../../common/test_initialization.dart';
 
 /// To debug compositing failures on browsers, set this flag to true and run
 /// flutter run -d chrome --web-renderer=html
 ///        test/golden_tests/engine/shader_mask_golden_test.dart --profile
 const bool debugTest = false;
+
+DomElement get sceneHost =>
+    EnginePlatformDispatcher.instance.implicitView!.dom.renderingHost
+        .querySelector(DomManager.sceneHostTagName)!;
 
 Future<void> main() async {
   if (!debugTest) {
@@ -29,20 +35,21 @@ Future<void> main() async {
 // https://github.com/flutter/flutter/issues/86623
 
 Future<void> testMain() async {
+  setUpUnitTests(
+    emulateTesterEnvironment: false,
+    setUpTestViewDimensions: false,
+  );
+
   setUpAll(() async {
     debugShowClipLayers = true;
-    await webOnlyInitializePlatform();
   });
 
   setUp(() async {
     SurfaceSceneBuilder.debugForgetFrameScene();
-    for (final DomNode scene in
-        flutterViewEmbedder.sceneHostElement!.querySelectorAll('flt-scene').cast<DomNode>()) {
+    for (final DomNode scene in sceneHost.querySelectorAll('flt-scene').cast<DomNode>()) {
       scene.remove();
     }
     initWebGl();
-    fontCollection.debugRegisterTestFonts();
-    await fontCollection.ensureFontsLoaded();
   });
 
   /// Should render the picture unmodified.
@@ -100,7 +107,7 @@ Future<void> testMain() async {
   test('Renders text with linear gradient shader mask', () async {
     _renderTextScene(BlendMode.srcIn);
     await matchGoldenFile('shadermask_linear_text.png',
-        region: const Rect.fromLTWH(0, 0, 360, 200), maxDiffRatePercent: 2.0);
+        region: const Rect.fromLTWH(0, 0, 360, 200));
   }, skip: isSafari || isFirefox);
 }
 
@@ -155,13 +162,12 @@ void _renderCirclesScene(BlendMode blendMode) {
       Offset(320 - shaderBounds.left, 150 - shaderBounds.top),
       colors, stops, TileMode.clamp, Matrix4.identity().storage);
 
-  builder.pushShaderMask(shader, shaderBounds, blendMode,
-      oldLayer: null);
+  builder.pushShaderMask(shader, shaderBounds, blendMode);
   final Picture circles2 = _drawTestPictureWithCircles(region, 180, 10);
   builder.addPicture(Offset.zero, circles2);
   builder.pop();
 
-  flutterViewEmbedder.sceneHostElement!.append(builder.build().webOnlyRootElement!);
+  sceneHost.append(builder.build().webOnlyRootElement!);
 }
 
 Picture _drawTestPictureWithText(
@@ -210,12 +216,11 @@ void _renderTextScene(BlendMode blendMode) {
       Offset(320 - shaderBounds.left, 150 - shaderBounds.top),
       colors, stops, TileMode.clamp, Matrix4.identity().storage);
 
-  builder.pushShaderMask(shader, shaderBounds, blendMode,
-      oldLayer: null);
+  builder.pushShaderMask(shader, shaderBounds, blendMode);
 
   final Picture textPicture2 = _drawTestPictureWithText(region, 180, 10);
   builder.addPicture(Offset.zero, textPicture2);
   builder.pop();
 
-  flutterViewEmbedder.sceneHostElement!.append(builder.build().webOnlyRootElement!);
+  sceneHost.append(builder.build().webOnlyRootElement!);
 }

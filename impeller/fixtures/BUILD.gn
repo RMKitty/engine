@@ -7,25 +7,61 @@ import("//flutter/testing/testing.gni")
 
 impeller_shaders("shader_fixtures") {
   name = "fixtures"
+
+  # Not analyzing because they are not performance critical, and mipmap uses
+  # textureLod, which uses an extension that malioc does not support.
+  analyze = false
   shaders = [
+    "array.frag",
+    "array.vert",
     "box_fade.frag",
     "box_fade.vert",
     "colors.vert",
     "colors.frag",
     "impeller.frag",
     "impeller.vert",
+    "inactive_uniforms.frag",
+    "inactive_uniforms.vert",
     "instanced_draw.frag",
     "instanced_draw.vert",
+    "mipmaps.frag",
+    "mipmaps.vert",
+    "sample.comp",
+    "stage1.comp",
+    "stage2.comp",
     "simple.vert",
     "test_texture.frag",
     "test_texture.vert",
+    "half.frag",
   ]
+
+  if (impeller_enable_opengles) {
+    gles_exclusions = [
+      "sample.comp",
+      "stage1.comp",
+      "stage2.comp",
+      "half.frag",
+    ]
+  }
+}
+
+scenec("scene_fixtures") {
+  geometry = [
+    "flutter_logo_baked.glb",
+    "two_triangles.glb",
+  ]
+  type = "gltf"
 }
 
 impellerc("runtime_stages") {
-  shaders = [ "ink_sparkle.frag" ]
+  shaders = [
+    "ink_sparkle.frag",
+    "runtime_stage_example.frag",
+    "gradient.frag",
+  ]
   sl_file_extension = "iplr"
   shader_target_flag = "--runtime-stage-metal"
+  iplr = true
 }
 
 test_fixtures("file_fixtures") {
@@ -35,14 +71,27 @@ test_fixtures("file_fixtures") {
     "//flutter/third_party/txt/third_party/fonts/Roboto-Regular.ttf",
     "airplane.jpg",
     "bay_bridge.jpg",
+    "blend_mode_dst.png",
+    "blend_mode_src.png",
     "blue_noise.png",
     "boston.jpg",
     "embarcadero.jpg",
+    "flutter_gpu_texture.frag",
+    "flutter_gpu_texture.vert",
+    "flutter_gpu_unlit.frag",
+    "flutter_gpu_unlit.vert",
+    "flutter_logo_baked.glb",
     "kalimba.jpg",
+    "multiple_stages.hlsl",
+    "resources_limit.vert",
     "sample.comp",
-    "sample.tesc",
-    "sample.tese",
+    "sample.frag",
     "sample.vert",
+    "sample_with_binding.vert",
+    "simple.vert.hlsl",
+    "sa%m#ple.vert",
+    "stage1.comp",
+    "stage2.comp",
     "struct_def_bug.vert",
     "table_mountain_nx.png",
     "table_mountain_ny.png",
@@ -51,11 +100,46 @@ test_fixtures("file_fixtures") {
     "table_mountain_py.png",
     "table_mountain_pz.png",
     "test_texture.frag",
+    "two_triangles.glb",
     "types.h",
+    "wtf.otf",
+    "texture_lookup.frag",
   ]
+  if (host_os == "mac") {
+    fixtures += [ "/System/Library/Fonts/Apple Color Emoji.ttc" ]
+  }
   fixtures +=
-      filter_include(get_target_outputs(":runtime_stages"), [ "*.iplr" ])
-  deps = [ ":runtime_stages" ]
+      filter_include(get_target_outputs(":runtime_stages"), [ "*.iplr" ]) +
+      filter_include(get_target_outputs(":scene_fixtures"), [ "*.ipscene" ])
+  deps = [
+    ":runtime_stages",
+    ":scene_fixtures",
+  ]
+}
+
+impellerc("flutter_gpu_shaders") {
+  shaders = [
+    # Temporarily build Flutter GPU test shaders as runtime stages.
+    "flutter_gpu_unlit.frag",
+    "flutter_gpu_unlit.vert",
+    "flutter_gpu_texture.frag",
+    "flutter_gpu_texture.vert",
+  ]
+  shader_target_flag = "--runtime-stage-metal"
+  shader_bundle = "{\"UnlitFragment\": {\"type\": \"fragment\", \"file\": \"../../flutter/impeller/fixtures/flutter_gpu_unlit.frag\"}, \"UnlitVertex\": {\"type\": \"vertex\", \"file\": \"../../flutter/impeller/fixtures/flutter_gpu_unlit.vert\"}, \"TextureFragment\": {\"type\": \"fragment\", \"file\": \"../../flutter/impeller/fixtures/flutter_gpu_texture.frag\"}, \"TextureVertex\": {\"type\": \"vertex\", \"file\": \"../../flutter/impeller/fixtures/flutter_gpu_texture.vert\"}}"
+  shader_bundle_output = "playground.shaderbundle"
+}
+
+test_fixtures("flutter_gpu_fixtures") {
+  dart_main = "dart_tests.dart"
+
+  fixtures = filter_include(get_target_outputs(":flutter_gpu_shaders"),
+                            [
+                              "*.iplr",
+                              "*.shaderbundle",
+                            ])
+
+  deps = [ ":flutter_gpu_shaders" ]
 }
 
 group("fixtures") {
@@ -63,6 +147,7 @@ group("fixtures") {
 
   public_deps = [
     ":file_fixtures",
+    ":scene_fixtures",
     ":shader_fixtures",
   ]
 }

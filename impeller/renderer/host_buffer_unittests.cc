@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 #include "flutter/testing/testing.h"
-#include "impeller/renderer/host_buffer.h"
+#include "impeller/core/host_buffer.h"
 
 namespace impeller {
 namespace testing {
@@ -12,7 +12,7 @@ TEST(HostBufferTest, TestInitialization) {
   ASSERT_TRUE(HostBuffer::Create());
   // Newly allocated buffers don't touch the heap till they have to.
   ASSERT_EQ(HostBuffer::Create()->GetLength(), 0u);
-  ASSERT_EQ(HostBuffer::Create()->GetReservedLength(), 0u);
+  ASSERT_EQ(HostBuffer::Create()->GetSize(), 0u);
 }
 
 TEST(HostBufferTest, CanEmplace) {

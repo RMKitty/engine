@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef FLUTTER_IMPELLER_RENDERER_BACKEND_GLES_PIPELINE_GLES_H_
+#define FLUTTER_IMPELLER_RENDERER_BACKEND_GLES_PIPELINE_GLES_H_
 
 #include "flutter/fml/macros.h"
 #include "impeller/base/backend_cast.h"
@@ -15,8 +16,9 @@ namespace impeller {
 
 class PipelineLibraryGLES;
 
-class PipelineGLES final : public Pipeline,
-                           public BackendCast<PipelineGLES, Pipeline> {
+class PipelineGLES final
+    : public Pipeline<PipelineDescriptor>,
+      public BackendCast<PipelineGLES, Pipeline<PipelineDescriptor>> {
  public:
   // |Pipeline|
   ~PipelineGLES() override;
@@ -27,7 +29,7 @@ class PipelineGLES final : public Pipeline,
 
   [[nodiscard]] bool UnbindProgram() const;
 
-  const BufferBindingsGLES* GetBufferBindings() const;
+  BufferBindingsGLES* GetBufferBindings() const;
 
   [[nodiscard]] bool BuildVertexDescriptor(const ProcTableGLES& gl,
                                            GLuint program);
@@ -45,9 +47,13 @@ class PipelineGLES final : public Pipeline,
 
   PipelineGLES(ReactorGLES::Ref reactor,
                std::weak_ptr<PipelineLibrary> library,
-               PipelineDescriptor desc);
+               const PipelineDescriptor& desc);
 
-  FML_DISALLOW_COPY_AND_ASSIGN(PipelineGLES);
+  PipelineGLES(const PipelineGLES&) = delete;
+
+  PipelineGLES& operator=(const PipelineGLES&) = delete;
 };
 
 }  // namespace impeller
+
+#endif  // FLUTTER_IMPELLER_RENDERER_BACKEND_GLES_PIPELINE_GLES_H_

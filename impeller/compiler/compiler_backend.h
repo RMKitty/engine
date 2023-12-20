@@ -2,8 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef FLUTTER_IMPELLER_COMPILER_COMPILER_BACKEND_H_
+#define FLUTTER_IMPELLER_COMPILER_COMPILER_BACKEND_H_
 
+#include <cstdint>
 #include <memory>
 #include <variant>
 
@@ -44,7 +46,9 @@ struct CompilerBackend {
 
   const spirv_cross::Compiler* operator->() const;
 
-  operator bool() const;
+  spirv_cross::Compiler* GetCompiler();
+
+  explicit operator bool() const;
 
   enum class ExtendedResourceIndex {
     kPrimary,
@@ -54,8 +58,6 @@ struct CompilerBackend {
                                          spirv_cross::ID id) const;
 
   const spirv_cross::Compiler* GetCompiler() const;
-
-  spirv_cross::Compiler* GetCompiler();
 
  private:
   Type type_ = Type::kMSL;
@@ -70,3 +72,5 @@ struct CompilerBackend {
 
 }  // namespace compiler
 }  // namespace impeller
+
+#endif  // FLUTTER_IMPELLER_COMPILER_COMPILER_BACKEND_H_

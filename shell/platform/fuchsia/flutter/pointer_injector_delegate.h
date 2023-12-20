@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef FLUTTER_SHELL_PLATFORM_FUCHSIA_POINTER_INJECTOR_DELEGATE_H_
-#define FLUTTER_SHELL_PLATFORM_FUCHSIA_POINTER_INJECTOR_DELEGATE_H_
+#ifndef FLUTTER_SHELL_PLATFORM_FUCHSIA_FLUTTER_POINTER_INJECTOR_DELEGATE_H_
+#define FLUTTER_SHELL_PLATFORM_FUCHSIA_FLUTTER_POINTER_INJECTOR_DELEGATE_H_
 
 #include <fuchsia/ui/pointerinjector/cpp/fidl.h>
 #include <fuchsia/ui/views/cpp/fidl.h>
@@ -28,13 +28,11 @@ class PointerInjectorDelegate {
       "View.pointerinjector.inject";
 
   PointerInjectorDelegate(fuchsia::ui::pointerinjector::RegistryHandle registry,
-                          fuchsia::ui::views::ViewRef host_view_ref,
-                          bool is_flatland)
+                          fuchsia::ui::views::ViewRef host_view_ref)
       : registry_(std::make_shared<fuchsia::ui::pointerinjector::RegistryPtr>(
             registry.Bind())),
         host_view_ref_(std::make_shared<fuchsia::ui::views::ViewRef>(
-            std::move(host_view_ref))),
-        is_flatland_(is_flatland) {}
+            std::move(host_view_ref))) {}
 
   // Handles the following pointer event related platform message requests:
   // View.Pointerinjector.inject
@@ -45,15 +43,14 @@ class PointerInjectorDelegate {
       fml::RefPtr<flutter::PlatformMessageResponse> response);
 
   // Adds an endpoint for |view_id| in |valid_views_| for lifecycle management.
-  // Called in |GFXPlatformView::OnCreateView()| and
-  // |FlatlandPlatformView::OnChildViewViewRef()|.
+  // Called in |PlatformView::OnChildViewViewRef()|.
   void OnCreateView(
       uint64_t view_id,
       std::optional<fuchsia::ui::views::ViewRef> view_ref = std::nullopt);
 
   // Closes the |fuchsia.ui.pointerinjector.Device| channel for |view_id| and
   // cleans up resources.
-  void OnDestroyView(uint64_t view_id) { valid_views_.erase(view_id); };
+  void OnDestroyView(uint64_t view_id) { valid_views_.erase(view_id); }
 
  private:
   using ViewId = int64_t;
@@ -71,10 +68,6 @@ class PointerInjectorDelegate {
 
     // |fuchsia.ui.pointerinjector.Event.trace_flow_id|.
     uint64_t trace_flow_id = 0;
-
-    // The view for which dispatch is attempted for the pointer event. For
-    // flatland views, this value is set as std::nullopt.
-    std::optional<fuchsia::ui::views::ViewRef> view_ref;
 
     // Logical size of the view's coordinate system.
     std::array<float, 2> logical_size = {0.f, 0.f};
@@ -106,7 +99,11 @@ class PointerInjectorDelegate {
             if (!weak) {
               return;
             }
-            weak->registered_ = false;
+
+            // Clear all the stale pointer events in |injector_events_| and
+            // reset the state of |weak| so that any future calls do not inject
+            // any stale pointer events.
+            weak->Reset();
           });
     }
 
@@ -129,6 +126,12 @@ class PointerInjectorDelegate {
 
     void EnqueueEvent(fuchsia::ui::pointerinjector::Event event);
 
+    // Resets |registered_|, |injection_in_flight_| and |injector_events_| so
+    // that |device_| can be re-registered and future calls to
+    // |fuchsia.ui.pointerinjector.Device.Inject| do not include any stale
+    // pointer events.
+    void Reset();
+
     // Set to true if there is a |fuchsia.ui.pointerinjector.Device.Inject| call
     // in progress. If true, the |fuchsia.ui.pointerinjector.Event| is buffered
     // in |injector_events_|.
@@ -143,7 +146,7 @@ class PointerInjectorDelegate {
     // ViewRef for the main flutter app launching the embedded child views.
     std::shared_ptr<fuchsia::ui::views::ViewRef> host_view_ref_;
 
-    // ViewRef for a flatland view. For GFX this value is set as std::nullopt.
+    // ViewRef for a flatland view.
     // Set in |OnCreateView|.
     std::optional<fuchsia::ui::views::ViewRef> view_ref_;
 
@@ -180,10 +183,8 @@ class PointerInjectorDelegate {
   // ViewRef for the main flutter app launching the embedded child views.
   std::shared_ptr<fuchsia::ui::views::ViewRef> host_view_ref_;
 
-  bool is_flatland_ = false;
-
   FML_DISALLOW_COPY_AND_ASSIGN(PointerInjectorDelegate);
 };
 
 }  // namespace flutter_runner
-#endif  // FLUTTER_SHELL_PLATFORM_FUCHSIA_POINTER_INJECTOR_DELEGATE_H_
+#endif  // FLUTTER_SHELL_PLATFORM_FUCHSIA_FLUTTER_POINTER_INJECTOR_DELEGATE_H_

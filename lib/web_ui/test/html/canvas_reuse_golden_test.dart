@@ -9,6 +9,8 @@ import 'package:ui/ui.dart' hide TextStyle;
 
 import 'package:web_engine_tester/golden_tester.dart';
 
+import '../common/test_initialization.dart';
+
 void main() {
   internalBootstrapBrowserTest(() => testMain);
 }
@@ -22,15 +24,10 @@ Future<void> testMain() async {
     ..strokeWidth = 2.0
     ..color = const Color(0xFFFF00FF);
 
-  setUp(() async {
-    debugEmulateFlutterTesterEnvironment = true;
-    await webOnlyInitializePlatform();
-    fontCollection.debugRegisterTestFonts();
-    await fontCollection.ensureFontsLoaded();
-  });
+  setUpUnitTests();
 
   // Regression test for https://github.com/flutter/flutter/issues/51514
-  test('Canvas is reused and z-index doesn\'t leak across paints', () async {
+  test("Canvas is reused and z-index doesn't leak across paints", () async {
     final EngineCanvas engineCanvas = BitmapCanvas(screenRect,
         RenderStrategy());
     const Rect region = Rect.fromLTWH(0, 0, 500, 500);
@@ -77,7 +74,7 @@ Future<void> testMain() async {
     final Path path2 = Path()
       ..moveTo(3, 0)
       ..quadraticBezierTo(100, 0, 100, 100);
-    rc2.drawImage(_createRealTestImage(), const Offset(0, 0), SurfacePaint());
+    rc2.drawImage(_createRealTestImage(), Offset.zero, SurfacePaint());
     rc2.drawPath(path2, testPaint);
     rc2.endRecording();
     rc2.apply(engineCanvas, screenRect);

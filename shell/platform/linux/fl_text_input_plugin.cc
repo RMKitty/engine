@@ -47,6 +47,8 @@ static constexpr char kTextAffinityDownstream[] = "TextAffinity.downstream";
 static constexpr char kMultilineInputType[] = "TextInputType.multiline";
 static constexpr char kNoneInputType[] = "TextInputType.none";
 
+static constexpr char kNewlineInputAction[] = "TextInputAction.newline";
+
 static constexpr int64_t kClientIdUnset = -1;
 
 typedef enum {
@@ -79,6 +81,8 @@ struct FlTextInputPluginPrivate {
 
   // Input method.
   GtkIMContext* im_context;
+
+  FlTextInputViewDelegate* view_delegate;
 
   flutter::TextInputModel* text_model;
 
@@ -259,6 +263,8 @@ static void im_preedit_changed_cb(FlTextInputPlugin* self) {
   FlTextInputPluginPrivate* priv = static_cast<FlTextInputPluginPrivate*>(
       fl_text_input_plugin_get_instance_private(self));
   std::string text_before_change = priv->text_model->GetText();
+  flutter::TextRange composing_before_change =
+      priv->text_model->composing_range();
   g_autofree gchar* buf = nullptr;
   gint cursor_offset = 0;
   gtk_im_context_get_preedit_string(priv->im_context, &buf, nullptr,
@@ -274,7 +280,7 @@ static void im_preedit_changed_cb(FlTextInputPlugin* self) {
   if (priv->enable_delta_model) {
     std::string text(buf);
     flutter::TextEditingDelta delta = flutter::TextEditingDelta(
-        text_before_change, priv->text_model->composing_range(), text);
+        text_before_change, composing_before_change, text);
     update_editing_state_with_delta(self, &delta);
   } else {
     update_editing_state(self);
@@ -286,7 +292,10 @@ static void im_commit_cb(FlTextInputPlugin* self, const gchar* text) {
   FlTextInputPluginPrivate* priv = static_cast<FlTextInputPluginPrivate*>(
       fl_text_input_plugin_get_instance_private(self));
   std::string text_before_change = priv->text_model->GetText();
+  flutter::TextRange composing_before_change =
+      priv->text_model->composing_range();
   flutter::TextRange selection_before_change = priv->text_model->selection();
+  gboolean was_composing = priv->text_model->composing();
 
   priv->text_model->AddText(text);
   if (priv->text_model->composing()) {
@@ -294,9 +303,12 @@ static void im_commit_cb(FlTextInputPlugin* self, const gchar* text) {
   }
 
   if (priv->enable_delta_model) {
-    flutter::TextEditingDelta delta = flutter::TextEditingDelta(
-        text_before_change, selection_before_change, text);
-    update_editing_state_with_delta(self, &delta);
+    flutter::TextRange replace_range =
+        was_composing ? composing_before_change : selection_before_change;
+    std::unique_ptr<flutter::TextEditingDelta> delta =
+        std::make_unique<flutter::TextEditingDelta>(text_before_change,
+                                                    replace_range, text);
+    update_editing_state_with_delta(self, delta.get());
   } else {
     update_editing_state(self);
   }
@@ -308,8 +320,8 @@ static void im_preedit_end_cb(FlTextInputPlugin* self) {
       fl_text_input_plugin_get_instance_private(self));
   priv->text_model->EndComposing();
   if (priv->enable_delta_model) {
-    flutter::TextEditingDelta delta = flutter::TextEditingDelta(
-        "", flutter::TextRange(-1, -1), priv->text_model->GetText());
+    flutter::TextEditingDelta delta =
+        flutter::TextEditingDelta(priv->text_model->GetText());
     update_editing_state_with_delta(self, &delta);
   } else {
     update_editing_state(self);
@@ -487,9 +499,13 @@ static void update_im_cursor_position(FlTextInputPlugin* self) {
            priv->composing_rect.y * priv->editabletext_transform[1][1] +
            priv->editabletext_transform[3][1] + priv->composing_rect.height;
 
+  // Transform from Flutter view coordinates to GTK window coordinates.
+  GdkRectangle preedit_rect = {};
+  fl_text_input_view_delegate_translate_coordinates(
+      priv->view_delegate, x, y, &preedit_rect.x, &preedit_rect.y);
+
   // Set the cursor location in window coordinates so that GTK can position any
   // system input method windows.
-  GdkRectangle preedit_rect = {x, y, 0, 0};
   gtk_im_context_set_cursor_location(priv->im_context, &preedit_rect);
 }
 
@@ -587,6 +603,12 @@ static void fl_text_input_plugin_dispose(GObject* object) {
     delete priv->text_model;
     priv->text_model = nullptr;
   }
+  if (priv->view_delegate != nullptr) {
+    g_object_remove_weak_pointer(
+        G_OBJECT(priv->view_delegate),
+        reinterpret_cast<gpointer*>(&(priv->view_delegate)));
+    priv->view_delegate = nullptr;
+  }
 
   G_OBJECT_CLASS(fl_text_input_plugin_parent_class)->dispose(object);
 }
@@ -630,7 +652,8 @@ static gboolean fl_text_input_plugin_filter_keypress_default(
       case GDK_KEY_Return:
       case GDK_KEY_KP_Enter:
       case GDK_KEY_ISO_Enter:
-        if (priv->input_type == kFlTextInputTypeMultiline) {
+        if (priv->input_type == kFlTextInputTypeMultiline &&
+            strcmp(priv->input_action, kNewlineInputAction) == 0) {
           priv->text_model->AddCodePoint('\n');
           text = "\n";
           changed = TRUE;
@@ -719,10 +742,13 @@ static void init_im_context(FlTextInputPlugin* self, GtkIMContext* im_context) {
                           G_CONNECT_SWAPPED);
 }
 
-FlTextInputPlugin* fl_text_input_plugin_new(FlBinaryMessenger* messenger,
-                                            GtkIMContext* im_context) {
+FlTextInputPlugin* fl_text_input_plugin_new(
+    FlBinaryMessenger* messenger,
+    GtkIMContext* im_context,
+    FlTextInputViewDelegate* view_delegate) {
   g_return_val_if_fail(FL_IS_BINARY_MESSENGER(messenger), nullptr);
   g_return_val_if_fail(GTK_IS_IM_CONTEXT(im_context), nullptr);
+  g_return_val_if_fail(FL_IS_TEXT_INPUT_VIEW_DELEGATE(view_delegate), nullptr);
 
   FlTextInputPlugin* self = FL_TEXT_INPUT_PLUGIN(
       g_object_new(fl_text_input_plugin_get_type(), nullptr));
@@ -736,6 +762,11 @@ FlTextInputPlugin* fl_text_input_plugin_new(FlBinaryMessenger* messenger,
                                             nullptr);
 
   init_im_context(self, im_context);
+
+  priv->view_delegate = view_delegate;
+  g_object_add_weak_pointer(
+      G_OBJECT(view_delegate),
+      reinterpret_cast<gpointer*>(&(priv->view_delegate)));
 
   return self;
 }

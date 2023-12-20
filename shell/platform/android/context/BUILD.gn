@@ -15,7 +15,8 @@ source_set("context") {
 
   deps = [
     "//flutter/fml",
-    "//third_party/skia",
+    "//flutter/impeller/renderer",
+    "//flutter/skia",
   ]
 
   if (shell_enable_vulkan) {

@@ -7,6 +7,7 @@ import 'package:test/test.dart';
 import 'package:ui/src/engine.dart';
 import 'package:ui/ui.dart';
 
+import '../../common/test_initialization.dart';
 import '../screenshot.dart';
 
 void main() {
@@ -14,12 +15,14 @@ void main() {
 }
 
 Future<void> testMain() async {
+  setUpUnitTests(
+    emulateTesterEnvironment: false,
+    setUpTestViewDimensions: false,
+  );
+
   setUp(() async {
     debugShowClipLayers = true;
     SurfaceSceneBuilder.debugForgetFrameScene();
-    await webOnlyInitializePlatform();
-    fontCollection.debugRegisterTestFonts();
-    await fontCollection.ensureFontsLoaded();
   });
 
   tearDown(() {
@@ -41,7 +44,7 @@ Future<void> testMain() async {
     const Rect region = Rect.fromLTWH(0, 0, 400, 400);
 
     final SurfaceSceneBuilder builder = SurfaceSceneBuilder();
-    final Picture testPicture = _drawTestPicture(region, useColor: false);
+    final Picture testPicture = _drawTestPicture(region);
     builder.addPicture(Offset.zero, testPicture);
     await sceneScreenshot(builder, 'canvas_draw_paint', region: region);
   }, skip: true); // TODO(ferhat): matchGolden fails when a div covers viewport.);

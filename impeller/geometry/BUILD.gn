@@ -10,6 +10,9 @@ impeller_component("geometry") {
     "color.h",
     "constants.cc",
     "constants.h",
+    "gradient.cc",
+    "gradient.h",
+    "half.h",
     "matrix.cc",
     "matrix.h",
     "matrix_decomposition.cc",
@@ -29,14 +32,30 @@ impeller_component("geometry") {
     "scalar.h",
     "shear.cc",
     "shear.h",
+    "sigma.cc",
+    "sigma.h",
     "size.cc",
     "size.h",
+    "trig.cc",
+    "trig.h",
     "type_traits.cc",
     "type_traits.h",
     "vector.cc",
     "vector.h",
-    "vertices.cc",
-    "vertices.h",
+  ]
+
+  deps = [
+    "../base",
+    "//flutter/fml",
+  ]
+}
+
+impeller_component("geometry_asserts") {
+  testonly = true
+  sources = [ "geometry_asserts.h" ]
+  deps = [
+    ":geometry",
+    "//flutter/testing:testing_lib",
   ]
 }
 
@@ -44,10 +63,26 @@ impeller_component("geometry_unittests") {
   testonly = true
   sources = [
     "geometry_unittests.cc",
-    "geometry_unittests.h",
+    "matrix_unittests.cc",
+    "path_unittests.cc",
+    "rect_unittests.cc",
+    "size_unittests.cc",
+    "trig_unittests.cc",
   ]
+
   deps = [
     ":geometry",
-    "//flutter/testing",
+    ":geometry_asserts",
+    "//flutter/testing:testing_lib",
+  ]
+}
+
+executable("geometry_benchmarks") {
+  testonly = true
+  sources = [ "geometry_benchmarks.cc" ]
+  deps = [
+    ":geometry",
+    "../tessellator",
+    "//flutter/benchmarking",
   ]
 }

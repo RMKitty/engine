@@ -18,7 +18,8 @@ void customEntrypoint() {
   sayHiFromCustomEntrypoint();
 }
 
-void sayHiFromCustomEntrypoint() native 'SayHiFromCustomEntrypoint';
+@pragma('vm:external-name', 'SayHiFromCustomEntrypoint')
+external void sayHiFromCustomEntrypoint();
 
 @pragma('vm:entry-point')
 void customEntrypoint1() {
@@ -27,9 +28,12 @@ void customEntrypoint1() {
   sayHiFromCustomEntrypoint3();
 }
 
-void sayHiFromCustomEntrypoint1() native 'SayHiFromCustomEntrypoint1';
-void sayHiFromCustomEntrypoint2() native 'SayHiFromCustomEntrypoint2';
-void sayHiFromCustomEntrypoint3() native 'SayHiFromCustomEntrypoint3';
+@pragma('vm:external-name', 'SayHiFromCustomEntrypoint1')
+external void sayHiFromCustomEntrypoint1();
+@pragma('vm:external-name', 'SayHiFromCustomEntrypoint2')
+external void sayHiFromCustomEntrypoint2();
+@pragma('vm:external-name', 'SayHiFromCustomEntrypoint3')
+external void sayHiFromCustomEntrypoint3();
 
 @pragma('vm:entry-point')
 void terminateExitCodeHandler() {
@@ -41,8 +45,15 @@ void executableNameNotNull() {
   notifyStringValue(Platform.executable);
 }
 
-void notifyStringValue(String value) native 'NotifyStringValue';
+@pragma('vm:entry-point')
+void implicitViewNotNull() {
+  notifyBoolValue(PlatformDispatcher.instance.implicitView != null);
+}
 
+@pragma('vm:external-name', 'NotifyStringValue')
+external void notifyStringValue(String value);
+@pragma('vm:external-name', 'NotifyBoolValue')
+external void notifyBoolValue(bool value);
 
 @pragma('vm:entry-point')
 void invokePlatformTaskRunner() {
@@ -63,14 +74,18 @@ Float64List kTestTransform = () {
   return values;
 }();
 
-void signalNativeTest() native 'SignalNativeTest';
-void signalNativeCount(int count) native 'SignalNativeCount';
-void signalNativeMessage(String message) native 'SignalNativeMessage';
-void notifySemanticsEnabled(bool enabled) native 'NotifySemanticsEnabled';
-void notifyAccessibilityFeatures(bool reduceMotion)
-    native 'NotifyAccessibilityFeatures';
-void notifySemanticsAction(int nodeId, int action, List<int> data)
-    native 'NotifySemanticsAction';
+@pragma('vm:external-name', 'SignalNativeTest')
+external void signalNativeTest();
+@pragma('vm:external-name', 'SignalNativeCount')
+external void signalNativeCount(int count);
+@pragma('vm:external-name', 'SignalNativeMessage')
+external void signalNativeMessage(String message);
+@pragma('vm:external-name', 'NotifySemanticsEnabled')
+external void notifySemanticsEnabled(bool enabled);
+@pragma('vm:external-name', 'NotifyAccessibilityFeatures')
+external void notifyAccessibilityFeatures(bool reduceMotion);
+@pragma('vm:external-name', 'NotifySemanticsAction')
+external void notifySemanticsAction(int nodeId, int action, List<int> data);
 
 /// Returns a future that completes when
 /// `PlatformDispatcher.instance.onSemanticsEnabledChanged` fires.
@@ -90,45 +105,39 @@ Future<void> get accessibilityFeaturesChanged {
   return featuresChanged.future;
 }
 
-class SemanticsActionData {
-  const SemanticsActionData(this.id, this.action, this.args);
-  final int id;
-  final SemanticsAction action;
-  final ByteData? args;
-}
-
-Future<SemanticsActionData> get semanticsAction {
-  final Completer<SemanticsActionData> actionReceived =
-      Completer<SemanticsActionData>();
-  PlatformDispatcher.instance.onSemanticsAction =
-      (int id, SemanticsAction action, ByteData? args) {
-    actionReceived.complete(SemanticsActionData(id, action, args));
+Future<SemanticsActionEvent> get semanticsActionEvent {
+  final Completer<SemanticsActionEvent> actionReceived =
+      Completer<SemanticsActionEvent>();
+  PlatformDispatcher.instance.onSemanticsActionEvent =
+      (SemanticsActionEvent action) {
+    actionReceived.complete(action);
   };
   return actionReceived.future;
 }
 
 @pragma('vm:entry-point')
-void a11y_main() async {
-  // Return initial state (semantics disabled).
+Future<void> a11y_main() async {
+  // 1: Return initial state (semantics disabled).
   notifySemanticsEnabled(PlatformDispatcher.instance.semanticsEnabled);
 
-  // Await semantics enabled from embedder.
+  // 2: Await semantics enabled from embedder.
   await semanticsChanged;
   notifySemanticsEnabled(PlatformDispatcher.instance.semanticsEnabled);
 
-  // Return initial state of accessibility features.
+  // 3: Return initial state of accessibility features.
   notifyAccessibilityFeatures(
       PlatformDispatcher.instance.accessibilityFeatures.reduceMotion);
 
-  // Await accessibility features changed from embedder.
+  // 4: Await accessibility features changed from embedder.
   await accessibilityFeaturesChanged;
   notifyAccessibilityFeatures(
       PlatformDispatcher.instance.accessibilityFeatures.reduceMotion);
 
-  // Fire semantics update.
+  // 5: Fire semantics update.
   final SemanticsUpdateBuilder builder = SemanticsUpdateBuilder()
     ..updateNode(
       id: 42,
+      identifier: '',
       label: 'A: root',
       labelAttributes: <StringAttribute>[],
       rect: Rect.fromLTRB(0.0, 0.0, 10.0, 10.0),
@@ -157,11 +166,12 @@ void a11y_main() async {
       increasedValueAttributes: <StringAttribute>[],
       decreasedValue: '',
       decreasedValueAttributes: <StringAttribute>[],
-      tooltip: '',
+      tooltip: 'tooltip',
       additionalActions: Int32List(0),
     )
     ..updateNode(
       id: 84,
+      identifier: '',
       label: 'B: leaf',
       labelAttributes: <StringAttribute>[],
       rect: Rect.fromLTRB(40.0, 40.0, 80.0, 80.0),
@@ -188,13 +198,14 @@ void a11y_main() async {
       increasedValueAttributes: <StringAttribute>[],
       decreasedValue: '',
       decreasedValueAttributes: <StringAttribute>[],
-      tooltip: '',
+      tooltip: 'tooltip',
       additionalActions: Int32List(0),
       childrenInHitTestOrder: Int32List(0),
       childrenInTraversalOrder: Int32List(0),
     )
     ..updateNode(
       id: 96,
+      identifier: '',
       label: 'C: branch',
       labelAttributes: <StringAttribute>[],
       rect: Rect.fromLTRB(40.0, 40.0, 80.0, 80.0),
@@ -223,11 +234,12 @@ void a11y_main() async {
       increasedValueAttributes: <StringAttribute>[],
       decreasedValue: '',
       decreasedValueAttributes: <StringAttribute>[],
-      tooltip: '',
+      tooltip: 'tooltip',
       additionalActions: Int32List(0),
     )
     ..updateNode(
       id: 128,
+      identifier: '',
       label: 'D: leaf',
       labelAttributes: <StringAttribute>[],
       rect: Rect.fromLTRB(40.0, 40.0, 80.0, 80.0),
@@ -255,7 +267,7 @@ void a11y_main() async {
       increasedValueAttributes: <StringAttribute>[],
       decreasedValue: '',
       decreasedValueAttributes: <StringAttribute>[],
-      tooltip: '',
+      tooltip: 'tooltip',
       childrenInHitTestOrder: Int32List(0),
       childrenInTraversalOrder: Int32List(0),
     )
@@ -264,20 +276,99 @@ void a11y_main() async {
       label: 'Archive',
       hint: 'archive message',
     );
-  PlatformDispatcher.instance.updateSemantics(builder.build());
+
+  PlatformDispatcher.instance.views.first.updateSemantics(builder.build());
+
   signalNativeTest();
 
-  // Await semantics action from embedder.
-  final SemanticsActionData data = await semanticsAction;
+  // 6: Await semantics action from embedder.
+  final SemanticsActionEvent data = await semanticsActionEvent;
   final List<int> actionArgs = <int>[
-    data.args!.getInt8(0),
-    data.args!.getInt8(1)
+    (data.arguments! as ByteData).getInt8(0),
+    (data.arguments! as ByteData).getInt8(1)
   ];
-  notifySemanticsAction(data.id, data.action.index, actionArgs);
+  notifySemanticsAction(data.nodeId, data.type.index, actionArgs);
 
-  // Await semantics disabled from embedder.
+  // 7: Await semantics disabled from embedder.
   await semanticsChanged;
   notifySemanticsEnabled(PlatformDispatcher.instance.semanticsEnabled);
+}
+
+@pragma('vm:entry-point')
+Future<void> a11y_string_attributes() async {
+  // 1: Wait until semantics are enabled.
+  if (!PlatformDispatcher.instance.semanticsEnabled) {
+    await semanticsChanged;
+  }
+
+  // 2: Update semantics with string attributes.
+  final SemanticsUpdateBuilder builder = SemanticsUpdateBuilder()
+    ..updateNode(
+      id: 42,
+      identifier: 'identifier',
+      label: 'What is the meaning of life?',
+      labelAttributes: <StringAttribute>[
+        LocaleStringAttribute(
+          range: TextRange(start: 0, end: 'What is the meaning of life?'.length),
+          locale: Locale('en'),
+        ),
+        SpellOutStringAttribute(
+          range: TextRange(start: 0, end: 1),
+        ),
+      ],
+      rect: Rect.fromLTRB(0.0, 0.0, 10.0, 10.0),
+      transform: kTestTransform,
+      childrenInTraversalOrder: Int32List.fromList(<int>[84, 96]),
+      childrenInHitTestOrder: Int32List.fromList(<int>[96, 84]),
+      actions: 0,
+      flags: 0,
+      maxValueLength: 0,
+      currentValueLength: 0,
+      textSelectionBase: 0,
+      textSelectionExtent: 0,
+      platformViewId: 0,
+      scrollChildren: 0,
+      scrollIndex: 0,
+      scrollPosition: 0.0,
+      scrollExtentMax: 0.0,
+      scrollExtentMin: 0.0,
+      elevation: 0.0,
+      thickness: 0.0,
+      hint: "It's a number",
+      hintAttributes: <StringAttribute>[
+        LocaleStringAttribute(
+          range: TextRange(start: 0, end: 1),
+          locale: Locale('en'),
+        ),
+        LocaleStringAttribute(
+          range: TextRange(start: 2, end: 3),
+          locale: Locale('fr'),
+        ),
+      ],
+      value: '42',
+      valueAttributes: <StringAttribute>[
+        LocaleStringAttribute(
+          range: TextRange(start: 0, end: '42'.length),
+          locale: Locale('en', 'US'),
+        ),
+      ],
+      increasedValue: '43',
+      increasedValueAttributes: <StringAttribute>[
+        SpellOutStringAttribute(
+          range: TextRange(start: 0, end: 1),
+        ),
+        SpellOutStringAttribute(
+          range: TextRange(start: 1, end: 2),
+        ),
+      ],
+      decreasedValue: '41',
+      decreasedValueAttributes: <StringAttribute>[],
+      tooltip: 'tooltip',
+      additionalActions: Int32List(0),
+    );
+
+  PlatformDispatcher.instance.views.first.updateSemantics(builder.build());
+  signalNativeTest();
 }
 
 @pragma('vm:entry-point')
@@ -293,7 +384,7 @@ void platform_messages_response() {
 void platform_messages_no_response() {
   PlatformDispatcher.instance.onPlatformMessage =
       (String name, ByteData? data, PlatformMessageResponseCallback? callback) {
-    var list = data!.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+    final Uint8List list = data!.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
     signalNativeMessage(utf8.decode(list));
     // This does nothing because no one is listening on the other side. But complete the loop anyway
     // to make sure all null checking on response handles in the engine is in place.
@@ -314,10 +405,10 @@ void null_platform_messages() {
 }
 
 Picture CreateSimplePicture() {
-  Paint blackPaint = Paint();
-  Paint whitePaint = Paint()..color = Color.fromARGB(255, 255, 255, 255);
-  PictureRecorder baseRecorder = PictureRecorder();
-  Canvas canvas = Canvas(baseRecorder);
+  final Paint blackPaint = Paint();
+  final Paint whitePaint = Paint()..color = Color.fromARGB(255, 255, 255, 255);
+  final PictureRecorder baseRecorder = PictureRecorder();
+  final Canvas canvas = Canvas(baseRecorder);
   canvas.drawRect(Rect.fromLTRB(0.0, 0.0, 1000.0, 1000.0), blackPaint);
   canvas.drawRect(Rect.fromLTRB(10.0, 10.0, 990.0, 990.0), whitePaint);
   return baseRecorder.endRecording();
@@ -326,7 +417,7 @@ Picture CreateSimplePicture() {
 @pragma('vm:entry-point')
 void can_composite_platform_views() {
   PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
-    SceneBuilder builder = SceneBuilder();
+    final SceneBuilder builder = SceneBuilder();
     builder.addPicture(Offset(1.0, 1.0), CreateSimplePicture());
     builder.pushOffset(1.0, 2.0);
     builder.addPlatformView(42, width: 123.0, height: 456.0);
@@ -342,7 +433,7 @@ void can_composite_platform_views() {
 @pragma('vm:entry-point')
 void can_composite_platform_views_with_opacity() {
   PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
-    SceneBuilder builder = SceneBuilder();
+    final SceneBuilder builder = SceneBuilder();
 
     // Root node
     builder.pushOffset(1.0, 2.0);
@@ -372,7 +463,7 @@ void can_composite_platform_views_with_opacity() {
 @pragma('vm:entry-point')
 void can_composite_with_opacity() {
   PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
-    SceneBuilder builder = SceneBuilder();
+    final SceneBuilder builder = SceneBuilder();
     builder.pushOpacity(127);
     builder.addPicture(Offset(1.0, 1.0), CreateSimplePicture());
     builder.pop(); // offset
@@ -384,10 +475,10 @@ void can_composite_with_opacity() {
 }
 
 Picture CreateColoredBox(Color color, Size size) {
-  Paint paint = Paint();
+  final Paint paint = Paint();
   paint.color = color;
-  PictureRecorder baseRecorder = PictureRecorder();
-  Canvas canvas = Canvas(baseRecorder);
+  final PictureRecorder baseRecorder = PictureRecorder();
+  final Canvas canvas = Canvas(baseRecorder);
   canvas.drawRect(Rect.fromLTRB(0.0, 0.0, size.width, size.height), paint);
   return baseRecorder.endRecording();
 }
@@ -395,13 +486,13 @@ Picture CreateColoredBox(Color color, Size size) {
 @pragma('vm:entry-point')
 void can_composite_platform_views_with_known_scene() {
   PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
-    Color red = Color.fromARGB(127, 255, 0, 0);
-    Color blue = Color.fromARGB(127, 0, 0, 255);
-    Color gray = Color.fromARGB(127, 127, 127, 127);
+    final Color red = Color.fromARGB(127, 255, 0, 0);
+    final Color blue = Color.fromARGB(127, 0, 0, 255);
+    final Color gray = Color.fromARGB(127, 127, 127, 127);
 
-    Size size = Size(50.0, 150.0);
+    final Size size = Size(50.0, 150.0);
 
-    SceneBuilder builder = SceneBuilder();
+    final SceneBuilder builder = SceneBuilder();
     builder.pushOffset(0.0, 0.0);
 
     // 10 (Index 0)
@@ -439,17 +530,31 @@ void can_composite_platform_views_with_known_scene() {
 }
 
 @pragma('vm:entry-point')
-void can_composite_platform_views_with_root_layer_only() {
+void can_composite_platform_views_transparent_overlay() {
   PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
-    Color red = Color.fromARGB(127, 255, 0, 0);
-    Size size = Size(50.0, 150.0);
+    final Color red = Color.fromARGB(127, 255, 0, 0);
+    final Color blue = Color.fromARGB(127, 0, 0, 255);
+    final Color transparent = Color(0xFFFFFF);
 
-    SceneBuilder builder = SceneBuilder();
+    final Size size = Size(50.0, 150.0);
+
+    final SceneBuilder builder = SceneBuilder();
     builder.pushOffset(0.0, 0.0);
 
     // 10 (Index 0)
     builder.addPicture(
         Offset(10.0, 10.0), CreateColoredBox(red, size)); // red - flutter
+
+    builder.pushOffset(20.0, 20.0);
+    // 20 (Index 1)
+    builder.addPlatformView(1,
+        width: size.width, height: size.height); // green - platform
+    builder.pop();
+
+    // 30 (Index 2)
+    builder.addPicture(
+        Offset(30.0, 30.0), CreateColoredBox(transparent, size)); // transparent picture, no layer should be created.
+
     builder.pop();
 
     PlatformDispatcher.instance.views.first.render(builder.build());
@@ -461,12 +566,14 @@ void can_composite_platform_views_with_root_layer_only() {
 }
 
 @pragma('vm:entry-point')
-void can_composite_platform_views_with_platform_layer_on_bottom() {
+void can_composite_platform_views_no_overlay() {
   PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
-    Color red = Color.fromARGB(127, 255, 0, 0);
-    Size size = Size(50.0, 150.0);
+    final Color red = Color.fromARGB(127, 255, 0, 0);
+    final Color blue = Color.fromARGB(127, 0, 0, 255);
 
-    SceneBuilder builder = SceneBuilder();
+    final Size size = Size(50.0, 150.0);
+
+    final SceneBuilder builder = SceneBuilder();
     builder.pushOffset(0.0, 0.0);
 
     // 10 (Index 0)
@@ -488,18 +595,88 @@ void can_composite_platform_views_with_platform_layer_on_bottom() {
   PlatformDispatcher.instance.scheduleFrame();
 }
 
+
+@pragma('vm:entry-point')
+void can_composite_platform_views_with_root_layer_only() {
+  PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
+    final Color red = Color.fromARGB(127, 255, 0, 0);
+    final Size size = Size(50.0, 150.0);
+
+    final SceneBuilder builder = SceneBuilder();
+    builder.pushOffset(0.0, 0.0);
+
+    // 10 (Index 0)
+    builder.addPicture(
+        Offset(10.0, 10.0), CreateColoredBox(red, size)); // red - flutter
+    builder.pop();
+
+    PlatformDispatcher.instance.views.first.render(builder.build());
+
+    signalNativeTest(); // Signal 2
+  };
+  signalNativeTest(); // Signal 1
+  PlatformDispatcher.instance.scheduleFrame();
+}
+
+@pragma('vm:entry-point')
+void can_composite_platform_views_with_platform_layer_on_bottom() {
+  PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
+    final Color red = Color.fromARGB(127, 255, 0, 0);
+    final Size size = Size(50.0, 150.0);
+
+    final SceneBuilder builder = SceneBuilder();
+    builder.pushOffset(0.0, 0.0);
+
+    // 10 (Index 0)
+    builder.addPicture(
+        Offset(10.0, 10.0), CreateColoredBox(red, size)); // red - flutter
+
+    builder.pushOffset(20.0, 20.0);
+    // 20 (Index 1)
+    builder.addPlatformView(1,
+        width: size.width, height: size.height); // green - platform
+    builder.pop();
+    builder.pop();
+
+    PlatformDispatcher.instance.views.first.render(builder.build());
+
+    signalNativeTest(); // Signal 2
+  };
+  signalNativeTest(); // Signal 1
+  PlatformDispatcher.instance.scheduleFrame();
+}
+
+@pragma('vm:external-name', 'SignalBeginFrame')
+external void signalBeginFrame();
+
+@pragma('vm:entry-point')
+Future<void> texture_destruction_callback_called_without_custom_compositor() async {
+  PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
+    final Color red = Color.fromARGB(127, 255, 0, 0);
+    final Size size = Size(50.0, 150.0);
+    final SceneBuilder builder = SceneBuilder();
+    builder.pushOffset(0.0, 0.0);
+    builder.addPicture(
+        Offset(10.0, 10.0), CreateColoredBox(red, size)); // red - flutter
+    builder.pop();
+    PlatformDispatcher.instance.views.first.render(builder.build());
+  };
+  PlatformDispatcher.instance.scheduleFrame();
+}
+
+
 @pragma('vm:entry-point')
 void can_render_scene_without_custom_compositor() {
   PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
-    Color red = Color.fromARGB(127, 255, 0, 0);
-    Color green = Color.fromARGB(127, 0, 255, 0);
-    Color blue = Color.fromARGB(127, 0, 0, 255);
-    Color magenta = Color.fromARGB(127, 255, 0, 255);
-    Color gray = Color.fromARGB(127, 127, 127, 127);
+    final Color red = Color.fromARGB(127, 255, 0, 0);
+    final Color green = Color.fromARGB(127, 0, 255, 0);
+    final Color blue = Color.fromARGB(127, 0, 0, 255);
+    final Color magenta = Color.fromARGB(127, 255, 0, 255);
+    final Color gray = Color.fromARGB(127, 127, 127, 127);
 
-    Size size = Size(50.0, 150.0);
+    final Size size = Size(50.0, 150.0);
 
-    SceneBuilder builder = SceneBuilder();
+    final SceneBuilder builder = SceneBuilder();
 
     builder.pushOffset(0.0, 0.0);
 
@@ -526,8 +703,8 @@ void can_render_scene_without_custom_compositor() {
 }
 
 Picture CreateGradientBox(Size size) {
-  Paint paint = Paint();
-  List<Color> rainbow = [
+  final Paint paint = Paint();
+  final List<Color> rainbow = <Color>[
     Color.fromARGB(255, 255, 0, 0), // red
     Color.fromARGB(255, 255, 165, 0), // orange
     Color.fromARGB(255, 255, 255, 0), // yellow
@@ -536,7 +713,7 @@ Picture CreateGradientBox(Size size) {
     Color.fromARGB(255, 75, 0, 130), // indigo
     Color.fromARGB(255, 238, 130, 238), // violet
   ];
-  List<double> stops = [
+  final List<double> stops = <double>[
     (1.0 / 7.0),
     (2.0 / 7.0),
     (3.0 / 7.0),
@@ -547,18 +724,19 @@ Picture CreateGradientBox(Size size) {
   ];
   paint.shader = Gradient.linear(
       Offset(0.0, 0.0), Offset(size.width, size.height), rainbow, stops);
-  PictureRecorder baseRecorder = PictureRecorder();
-  Canvas canvas = Canvas(baseRecorder);
+  final PictureRecorder baseRecorder = PictureRecorder();
+  final Canvas canvas = Canvas(baseRecorder);
   canvas.drawRect(Rect.fromLTRB(0.0, 0.0, size.width, size.height), paint);
   return baseRecorder.endRecording();
 }
 
-void _echoKeyEvent(int change, int timestamp, int physical, int logical,
-    int charCode, bool synthesized) native 'EchoKeyEvent';
+@pragma('vm:external-name', 'EchoKeyEvent')
+external void _echoKeyEvent(int change, int timestamp, int physical,
+    int logical, int charCode, bool synthesized, int deviceType);
 
 // Convert `kind` in enum form to its integer form.
 //
-// It performs a reversed mapping from `unserializeKeyEventKind`
+// It performs a reversed mapping from `UnserializeKeyEventType`
 // in shell/platform/embedder/tests/embedder_unittests.cc.
 int _serializeKeyEventType(KeyEventType change) {
   switch (change) {
@@ -571,9 +749,28 @@ int _serializeKeyEventType(KeyEventType change) {
   }
 }
 
+// Convert `deviceType` in enum form to its integer form.
+//
+// It performs a reversed mapping from `UnserializeKeyEventDeviceType`
+// in shell/platform/embedder/tests/embedder_unittests.cc.
+int _serializeKeyEventDeviceType(KeyEventDeviceType deviceType) {
+  switch (deviceType) {
+    case KeyEventDeviceType.keyboard:
+      return 1;
+    case KeyEventDeviceType.directionalPad:
+      return 2;
+    case KeyEventDeviceType.gamepad:
+      return 3;
+    case KeyEventDeviceType.joystick:
+      return 4;
+    case KeyEventDeviceType.hdmi:
+      return 5;
+  }
+}
+
 // Echo the event data with `_echoKeyEvent`, and returns synthesized as handled.
 @pragma('vm:entry-point')
-void key_data_echo() async {
+Future<void> key_data_echo() async {
   PlatformDispatcher.instance.onKeyData = (KeyData data) {
     _echoKeyEvent(
       _serializeKeyEventType(data.type),
@@ -582,6 +779,7 @@ void key_data_echo() async {
       data.logical,
       data.character == null ? 0 : data.character!.codeUnitAt(0),
       data.synthesized,
+      _serializeKeyEventDeviceType(data.deviceType),
     );
     return data.synthesized;
   };
@@ -591,7 +789,7 @@ void key_data_echo() async {
 // After platform channel 'test/starts_echo' receives a message, starts echoing
 // the event data with `_echoKeyEvent`, and returns synthesized as handled.
 @pragma('vm:entry-point')
-void key_data_late_echo() async {
+Future<void> key_data_late_echo() async {
   channelBuffers.setListener('test/starts_echo',
       (ByteData? data, PlatformMessageResponseCallback callback) {
     PlatformDispatcher.instance.onKeyData = (KeyData data) {
@@ -602,6 +800,7 @@ void key_data_late_echo() async {
         data.logical,
         data.character == null ? 0 : data.character!.codeUnitAt(0),
         data.synthesized,
+        _serializeKeyEventDeviceType(data.deviceType),
       );
       return data.synthesized;
     };
@@ -613,9 +812,9 @@ void key_data_late_echo() async {
 @pragma('vm:entry-point')
 void render_gradient() {
   PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
-    Size size = Size(800.0, 600.0);
+    final Size size = Size(800.0, 600.0);
 
-    SceneBuilder builder = SceneBuilder();
+    final SceneBuilder builder = SceneBuilder();
 
     builder.pushOffset(0.0, 0.0);
 
@@ -632,9 +831,9 @@ void render_gradient() {
 @pragma('vm:entry-point')
 void render_texture() {
   PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
-    Size size = Size(800.0, 600.0);
+    final Size size = Size(800.0, 600.0);
 
-    SceneBuilder builder = SceneBuilder();
+    final SceneBuilder builder = SceneBuilder();
 
     builder.pushOffset(0.0, 0.0);
 
@@ -650,10 +849,10 @@ void render_texture() {
 @pragma('vm:entry-point')
 void render_gradient_on_non_root_backing_store() {
   PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
-    Size size = Size(800.0, 600.0);
-    Color red = Color.fromARGB(127, 255, 0, 0);
+    final Size size = Size(800.0, 600.0);
+    final Color red = Color.fromARGB(127, 255, 0, 0);
 
-    SceneBuilder builder = SceneBuilder();
+    final SceneBuilder builder = SceneBuilder();
 
     builder.pushOffset(0.0, 0.0);
 
@@ -678,20 +877,20 @@ void verify_b141980393() {
   PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
     // The platform view in the test case is screen sized but with margins of 31
     // and 37 points from the top and bottom.
-    double top_margin = 31.0;
-    double bottom_margin = 37.0;
-    Size platform_view_size = Size(800.0, 600.0 - top_margin - bottom_margin);
+    const double topMargin = 31.0;
+    const double bottomMargin = 37.0;
+    final Size platformViewSize = Size(800.0, 600.0 - topMargin - bottomMargin);
 
-    SceneBuilder builder = SceneBuilder();
+    final SceneBuilder builder = SceneBuilder();
 
     builder.pushOffset(
         0.0, // x
-        top_margin // y
+        topMargin // y
         );
 
     // The web view in example.
     builder.addPlatformView(1337,
-        width: platform_view_size.width, height: platform_view_size.height);
+        width: platformViewSize.width, height: platformViewSize.height);
 
     builder.pop();
 
@@ -703,8 +902,8 @@ void verify_b141980393() {
 @pragma('vm:entry-point')
 void can_display_platform_view_with_pixel_ratio() {
   PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
-    SceneBuilder builder = SceneBuilder();
-    builder.pushTransform(Float64List.fromList([
+    final SceneBuilder builder = SceneBuilder();
+    builder.pushTransform(Float64List.fromList(<double>[
       2.0,
       0.0,
       0.0,
@@ -746,7 +945,7 @@ void can_receive_locale_updates() {
 @pragma('vm:entry-point')
 void verify_b143464703() {
   PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
-    SceneBuilder builder = SceneBuilder();
+    final SceneBuilder builder = SceneBuilder();
     builder.pushOffset(0.0, 0.0); // base
 
     // Background
@@ -784,7 +983,7 @@ void verify_b143464703() {
 @pragma('vm:entry-point')
 void push_frames_over_and_over() {
   PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
-    SceneBuilder builder = SceneBuilder();
+    final SceneBuilder builder = SceneBuilder();
     builder.pushOffset(0.0, 0.0);
     builder.addPicture(
         Offset(0.0, 0.0),
@@ -804,7 +1003,7 @@ void push_frames_over_and_over() {
 @pragma('vm:entry-point')
 void platform_view_mutators() {
   PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
-    SceneBuilder builder = SceneBuilder();
+    final SceneBuilder builder = SceneBuilder();
     builder.pushOffset(0.0, 0.0); // base
     builder.addPicture(Offset(0.0, 0.0), CreateGradientBox(Size(800.0, 600.0)));
 
@@ -826,7 +1025,7 @@ void platform_view_mutators() {
 @pragma('vm:entry-point')
 void platform_view_mutators_with_pixel_ratio() {
   PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
-    SceneBuilder builder = SceneBuilder();
+    final SceneBuilder builder = SceneBuilder();
     builder.pushOffset(0.0, 0.0); // base
     builder.addPicture(Offset(0.0, 0.0), CreateGradientBox(Size(400.0, 300.0)));
 
@@ -857,7 +1056,7 @@ void empty_scene() {
 @pragma('vm:entry-point')
 void scene_with_no_container() {
   PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
-    SceneBuilder builder = SceneBuilder();
+    final SceneBuilder builder = SceneBuilder();
     builder.addPicture(Offset(0.0, 0.0), CreateGradientBox(Size(400.0, 300.0)));
     PlatformDispatcher.instance.views.first.render(builder.build());
     signalNativeTest();
@@ -866,10 +1065,10 @@ void scene_with_no_container() {
 }
 
 Picture CreateArcEndCapsPicture() {
-  PictureRecorder baseRecorder = PictureRecorder();
-  Canvas canvas = Canvas(baseRecorder);
+  final PictureRecorder baseRecorder = PictureRecorder();
+  final Canvas canvas = Canvas(baseRecorder);
 
-  var style = Paint()
+  final style = Paint()
     ..strokeWidth = 12.0
     ..style = PaintingStyle.stroke
     ..strokeCap = StrokeCap.round
@@ -885,7 +1084,7 @@ Picture CreateArcEndCapsPicture() {
 @pragma('vm:entry-point')
 void arc_end_caps_correct() {
   PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
-    SceneBuilder builder = SceneBuilder();
+    final SceneBuilder builder = SceneBuilder();
     builder.addPicture(Offset(0.0, 0.0), CreateArcEndCapsPicture());
     PlatformDispatcher.instance.views.first.render(builder.build());
   };
@@ -895,7 +1094,7 @@ void arc_end_caps_correct() {
 @pragma('vm:entry-point')
 void scene_builder_with_clips() {
   PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
-    SceneBuilder builder = SceneBuilder();
+    final SceneBuilder builder = SceneBuilder();
     builder.pushClipRect(Rect.fromLTRB(10.0, 10.0, 390.0, 290.0));
     builder.addPlatformView(42, width: 400.0, height: 300.0);
     builder.addPicture(Offset(0.0, 0.0), CreateGradientBox(Size(400.0, 300.0)));
@@ -907,7 +1106,7 @@ void scene_builder_with_clips() {
 @pragma('vm:entry-point')
 void scene_builder_with_complex_clips() {
   PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
-    SceneBuilder builder = SceneBuilder();
+    final SceneBuilder builder = SceneBuilder();
 
     builder.pushClipRect(Rect.fromLTRB(0.0, 0.0, 1024.0, 600.0));
     builder.pushOffset(512.0, 0.0);
@@ -923,11 +1122,12 @@ void scene_builder_with_complex_clips() {
   PlatformDispatcher.instance.scheduleFrame();
 }
 
-void sendObjectToNativeCode(dynamic object) native 'SendObjectToNativeCode';
+@pragma('vm:external-name', 'SendObjectToNativeCode')
+external void sendObjectToNativeCode(dynamic object);
 
 @pragma('vm:entry-point')
 void objects_can_be_posted() {
-  ReceivePort port = ReceivePort();
+  final ReceivePort port = ReceivePort();
   port.listen((dynamic message) {
     sendObjectToNativeCode(message);
   });
@@ -937,7 +1137,7 @@ void objects_can_be_posted() {
 @pragma('vm:entry-point')
 void empty_scene_posts_zero_layers_to_compositor() {
   PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
-    SceneBuilder builder = SceneBuilder();
+    final SceneBuilder builder = SceneBuilder();
     // Should not render anything.
     builder.pushClipRect(Rect.fromLTRB(0.0, 0.0, 300.0, 200.0));
     PlatformDispatcher.instance.views.first.render(builder.build());
@@ -948,7 +1148,7 @@ void empty_scene_posts_zero_layers_to_compositor() {
 @pragma('vm:entry-point')
 void compositor_can_post_only_platform_views() {
   PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
-    SceneBuilder builder = SceneBuilder();
+    final SceneBuilder builder = SceneBuilder();
     builder.addPlatformView(42, width: 300.0, height: 200.0);
     builder.addPlatformView(24, width: 300.0, height: 200.0);
     PlatformDispatcher.instance.views.first.render(builder.build());
@@ -958,29 +1158,49 @@ void compositor_can_post_only_platform_views() {
 
 @pragma('vm:entry-point')
 void render_targets_are_recycled() {
-  int frame_count = 0;
+  int frameCount = 0;
   PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
-    SceneBuilder builder = SceneBuilder();
+    final SceneBuilder builder = SceneBuilder();
+    for (int i = 0; i < 10; i++) {
+      builder.addPicture(Offset(0.0, 0.0), CreateGradientBox(Size(30.0, 20.0)));
+      builder.addPlatformView(42 + i, width: 30.0, height: 20.0);
+    }
+    PlatformDispatcher.instance.views.first.render(builder.build());
+    frameCount++;
+    if (frameCount == 8) {
+      signalNativeTest();
+    } else {
+      PlatformDispatcher.instance.scheduleFrame();
+    }
+  };
+  PlatformDispatcher.instance.scheduleFrame();
+}
+
+@pragma('vm:entry-point')
+void render_targets_are_in_stable_order() {
+  int frameCount = 0;
+  PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
+    final SceneBuilder builder = SceneBuilder();
     for (int i = 0; i < 10; i++) {
       builder.addPicture(Offset(0.0, 0.0), CreateGradientBox(Size(30.0, 20.0)));
       builder.addPlatformView(42 + i, width: 30.0, height: 20.0);
     }
     PlatformDispatcher.instance.views.first.render(builder.build());
     PlatformDispatcher.instance.scheduleFrame();
-    frame_count++;
-    if (frame_count == 8) {
+    frameCount++;
+    if (frameCount == 8) {
       signalNativeTest();
     }
   };
   PlatformDispatcher.instance.scheduleFrame();
 }
 
-void nativeArgumentsCallback(List<String> args)
-    native 'NativeArgumentsCallback';
+@pragma('vm:external-name', 'NativeArgumentsCallback')
+external void nativeArgumentsCallback(List<String> args);
 
 @pragma('vm:entry-point')
 void custom_logger(List<String> args) {
-  print("hello world");
+  print('hello world');
 }
 
 @pragma('vm:entry-point')
@@ -988,18 +1208,18 @@ void dart_entrypoint_args(List<String> args) {
   nativeArgumentsCallback(args);
 }
 
-void snapshotsCallback(Image big_image, Image small_image)
-    native 'SnapshotsCallback';
+@pragma('vm:external-name', 'SnapshotsCallback')
+external void snapshotsCallback(Image bigImage, Image smallImage);
 
 @pragma('vm:entry-point')
-void snapshot_large_scene(int max_size) async {
+Future<void> snapshot_large_scene(int maxSize) async {
   // Set width to double the max size, which will result in height being half the max size after scaling.
-  double width = max_size * 2.0, height = max_size.toDouble();
+  double width = maxSize * 2.0, height = maxSize.toDouble();
 
   PictureRecorder recorder = PictureRecorder();
   {
-    Canvas canvas = Canvas(recorder, Rect.fromLTWH(0, 0, width, height));
-    Paint paint = Paint();
+    final Canvas canvas = Canvas(recorder, Rect.fromLTWH(0, 0, width, height));
+    final Paint paint = Paint();
     // Bottom left
     paint.color = Color.fromARGB(255, 100, 255, 100);
     canvas.drawRect(Rect.fromLTWH(0, height / 2, width / 2, height / 2), paint);
@@ -1008,31 +1228,31 @@ void snapshot_large_scene(int max_size) async {
     canvas.drawRect(Rect.fromLTWH(width / 2, 0, width / 2, height / 2), paint);
   }
   Picture picture = recorder.endRecording();
-  Image big_image = await picture.toImage(width.toInt(), height.toInt());
+  final Image bigImage = await picture.toImage(width.toInt(), height.toInt());
 
   // The max size varies across hardware/drivers, so normalize the result to a smaller target size in
   // order to reliably test against an image fixture.
-  double small_width = 128, small_height = 64;
+  double smallWidth = 128, smallHeight = 64;
   recorder = PictureRecorder();
   {
-    Canvas canvas =
-        Canvas(recorder, Rect.fromLTWH(0, 0, small_width, small_height));
-    canvas.scale(small_width / big_image.width);
-    canvas.drawImage(big_image, Offset.zero, Paint());
+    final Canvas canvas =
+        Canvas(recorder, Rect.fromLTWH(0, 0, smallWidth, smallHeight));
+    canvas.scale(smallWidth / bigImage.width);
+    canvas.drawImage(bigImage, Offset.zero, Paint());
   }
   picture = recorder.endRecording();
-  Image small_image =
-      await picture.toImage(small_width.toInt(), small_height.toInt());
+  final Image smallImage =
+      await picture.toImage(smallWidth.toInt(), smallHeight.toInt());
 
-  snapshotsCallback(big_image, small_image);
+  snapshotsCallback(bigImage, smallImage);
 }
 
 @pragma('vm:entry-point')
 void invalid_backingstore() {
   PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
-    Color red = Color.fromARGB(127, 255, 0, 0);
-    Size size = Size(50.0, 150.0);
-    SceneBuilder builder = SceneBuilder();
+    final Color red = Color.fromARGB(127, 255, 0, 0);
+    final Size size = Size(50.0, 150.0);
+    final SceneBuilder builder = SceneBuilder();
     builder.pushOffset(0.0, 0.0);
     builder.addPicture(
         Offset(10.0, 10.0), CreateColoredBox(red, size)); // red - flutter
@@ -1080,4 +1300,49 @@ void draw_solid_green() {
 @pragma('vm:entry-point')
 void draw_solid_blue() {
   drawSolidColor(const Color.fromARGB(255, 0, 0, 255));
+}
+
+@pragma('vm:entry-point')
+void pointer_data_packet() {
+  PlatformDispatcher.instance.onPointerDataPacket =
+    (PointerDataPacket packet) {
+    signalNativeCount(packet.data.length);
+
+    for (final pointerData in packet.data) {
+      signalNativeMessage(pointerData.toString());
+    }
+  };
+
+  signalNativeTest();
+}
+
+@pragma('vm:entry-point')
+Future<void> channel_listener_response() async {
+  channelBuffers.setListener('test/listen',
+      (ByteData? data, PlatformMessageResponseCallback callback) {
+    callback(null);
+  });
+  signalNativeTest();
+}
+
+@pragma('vm:entry-point')
+void render_gradient_retained() {
+  OffsetEngineLayer? offsetLayer; // Retain the offset layer.
+  PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
+    final Size size = Size(800.0, 600.0);
+
+    final SceneBuilder builder = SceneBuilder();
+
+    offsetLayer = builder.pushOffset(0.0, 0.0, oldLayer: offsetLayer);
+
+    // display_list_layer will comparing the display_list
+    // no need to retain the picture
+    builder.addPicture(
+        Offset(0.0, 0.0), CreateGradientBox(size)); // gradient - flutter
+
+    builder.pop();
+
+    PlatformDispatcher.instance.views.first.render(builder.build());
+  };
+  PlatformDispatcher.instance.scheduleFrame();
 }

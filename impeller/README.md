@@ -13,8 +13,6 @@
 
 ![Impeller](docs/assets/showcase.png)
 
-⚠️ Impeller is a Prototype and Work-In-Progress. Proceed with caution. ⚠️
-
 Impeller is a rendering runtime for Flutter with the following objectives:
 
 * **Predictable Performance**: All shader compilation and reflection is
@@ -102,6 +100,15 @@ states of completion:
   package agnosticism in the Impeller interface. This sub-framework primarily
   provides a custom implementation of the `flutter::DisplayListDispatcher` that
   forwards Flutter rendering intent to Impeller.
+* **`//impeller/typographer`**: Contains a backend agnostic interface for
+  rendering typefaces. While Impeller does **not** do any text layout or
+  shaping, it does render shaped glyph runs. The application specifies these
+  glyph runs to Impeller using the Typographer subsystem.
+  * **`//impeller/typographer/backend`**: Contains code that interfaces with an
+    underlying (usually platform-specific) library or toolkit to render glyphs
+    in typefaces into texture atlases. Impeller will then reference these glyphs
+    when rendering shaped glyph runs. No Impeller sub-frameworks may depend on
+    these targets. There may be multiple typographer backends.
 * **`//impeller/base`**: Contains C++ utilities that are used throughout the
   Impeller family of frameworks. Ideally, these should go in `//flutter/fml` but
   their use is probably not widespread enough to at this time.
@@ -114,11 +121,25 @@ states of completion:
   removal and must not be used outside of tests.
 * **`//fixtures`**: Contains test fixtures used by the various test harnesses.
   This depends on `//flutter/testing`.
-* **`//tools`**: Contains all GN rules and python scripts for working with
-  Impeller. These include GN rules processing GLSL shaders, including reflected
-  shader information as source set targets, and, including compiled shader
-  intermediate representations into the final executable as binary blobs for
-  easier packaging.
+* **`//impeller/tools`**: Contains all GN rules and python scripts for working
+  with Impeller. These include GN rules processing GLSL shaders, including
+  reflected shader information as source set targets, and, including compiled
+  shader intermediate representations into the final executable as binary blobs
+  for easier packaging.
+* **`//impeller/toolkit`**: Contains Impeller agnostic toolkits that provide
+  more ergonomic  wrappers around certain APIs like EGL. Toolkits must be
+  dependency free so that an external component using a toolkit doesn't have to
+  pull in a significant portion of Impeller itself.
+* **`//impeller/shader_archive`**: Create a persistent library of shader blobs.
+  This is primarily used by rendering backends that don't have the notion of a
+  shader library. In Impeller, all shaders are packaged into a single library
+  that contains a manifest of the shaders in the library along with the
+  pre-compiled shaders themselves. Unlike Metal, backends like OpenGL ES and
+  Vulkan don't have such a concept. For these backends, `//impeller/blobcat` is
+  used to create a single shader library to be packaged with the engine.
+* **`//impeller/scene`**: Contains an experimental 3D model renderer. This is
+  currently only exposed via [a special build of the Flutter
+  Engine](https://github.com/flutter/flutter/wiki/Impeller-Scene).
 
 ## The Offline Shader Compilation Pipeline
 
@@ -150,17 +171,37 @@ states of completion:
   necessary. It is possible for callers to perform reflection at runtime but
   there are no Impeller components that do this currently.
 
-![Shader Compilation Pipeline](docs/assets/shader_pipeline.png)
+```mermaid
+flowchart TD
+    glsl_460[GLSL ES 4.60] -- Stage 1 Compiler --> spirv[SPIRV]
+
+    spirv -- SPIRV Optimizer --> optimized_spirv[Optimized SPIRV]
+
+    optimized_spirv -- Metal Stage 2 Compiler --> metal_sources[Metal Shader Sources]
+    metal_sources -- Metal Linker --> metal_library[Metal Library]
+
+    optimized_spirv -- Vulkan Stage 2 Compiler --> vulkan_spirv[Vulkan SPIRV]
+    vulkan_spirv -- Shader Archiver --> vulkan_shader_archive[Vulkan Shader Archive]
+
+    optimized_spirv -- GLSL ES Stage 2 Compiler --> glsl_es_100[GLSL ES 1.00]
+    glsl_es_100 -- Shader Archiver --> gles_shader_archive[OpenGL ES Shader Archive]
+
+    spirv -- Reflector --> cxx_sources[C++ Sources]
+    cxx_sources -- Ninja Build --> cxx_library[C++ Library]
+
+    vulkan_shader_archive -- Multi Arch Archiver --> multi_arch_archive[Multi Architecture Archive]
+    gles_shader_archive -- Multi Arch Archiver --> multi_arch_archive
+```
 
 ## Try Impeller in Flutter
 
-Impeller is available under the `--enable-impeller` flag on iOS and Android.
-This flag can be specified to `flutter run`.
+Impeller is available under the `--enable-impeller` flag on iOS, Android, and
+macOS Desktop. This flag can be specified to `flutter run`.
 
 If the application needs to be launched with Impeller enabled without using the
 Flutter tool, follow the platform specific steps below.
 
-### iOS
+### iOS and macOS Desktop
 
 To your `Info.plist` file, add under the top-level `<dict>` tag:
 ```
@@ -182,7 +223,13 @@ To your `AndroidManifest.xml` file, add under the `<application>` tag:
 * [Frequently Asked Questions](docs/faq.md)
 * [Impellers Coordinate System](docs/coordinate_system.md)
 * [How to Setup Xcode for GPU Frame Captures with Metal.](docs/xcode_frame_capture.md)
+* [How to Setup RenderDoc Frame Captures with Vulkan.](docs/renderdoc_frame_capture.md)
 * [Learning to Read GPU Frame Captures](docs/read_frame_captures.md)
 * [How to Enable Metal Validation for Command Line Apps.](docs/metal_validation.md)
 * [How Impeller Works Around The Lack of Uniform Buffers in Open GL ES 2.0.](docs/ubo_gles2.md)
 * [Guidance for writing efficient shaders](docs/shader_optimization.md)
+* [How color blending works in Impeller](docs/blending.md)
+* [Enabling Vulkan Validation Layers on Android](docs/android_validation_layers.md)
+* [Important Benchmarks](docs/benchmarks.md)
+* [Threading in the Vulkan Backend](docs/vulkan_threading.md)
+* [Android Rendering Backend Selection](docs/android.md)

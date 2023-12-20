@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef FLUTTER_LIB_VOLATILE_PATH_TRACKER_H_
-#define FLUTTER_LIB_VOLATILE_PATH_TRACKER_H_
+#ifndef FLUTTER_LIB_UI_VOLATILE_PATH_TRACKER_H_
+#define FLUTTER_LIB_UI_VOLATILE_PATH_TRACKER_H_
 
 #include <deque>
 #include <memory>
@@ -51,7 +51,7 @@ class VolatilePathTracker {
   // Must be called from the UI task runner.
   //
   // Callers should only insert paths that are currently volatile.
-  void Track(std::shared_ptr<TrackedPath> path);
+  void Track(const std::shared_ptr<TrackedPath>& path);
 
   // Called by the shell at the end of a frame after notifying Dart about idle
   // time.
@@ -76,4 +76,4 @@ class VolatilePathTracker {
 
 }  // namespace flutter
 
-#endif  // FLUTTER_LIB_VOLATILE_PATH_TRACKER_H_
+#endif  // FLUTTER_LIB_UI_VOLATILE_PATH_TRACKER_H_

@@ -2,15 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef FLUTTER_IMPELLER_RENDERER_BACKEND_GLES_DEVICE_BUFFER_GLES_H_
+#define FLUTTER_IMPELLER_RENDERER_BACKEND_GLES_DEVICE_BUFFER_GLES_H_
 
+#include <cstdint>
 #include <memory>
 
 #include "flutter/fml/macros.h"
 #include "impeller/base/allocation.h"
 #include "impeller/base/backend_cast.h"
+#include "impeller/core/device_buffer.h"
 #include "impeller/renderer/backend/gles/reactor_gles.h"
-#include "impeller/renderer/device_buffer.h"
 
 namespace impeller {
 
@@ -18,15 +20,17 @@ class DeviceBufferGLES final
     : public DeviceBuffer,
       public BackendCast<DeviceBufferGLES, DeviceBuffer> {
  public:
-  DeviceBufferGLES(ReactorGLES::Ref reactor,
-                   std::shared_ptr<Allocation> buffer,
-                   size_t size,
-                   StorageMode mode);
+  DeviceBufferGLES(DeviceBufferDescriptor desc,
+                   ReactorGLES::Ref reactor,
+                   std::shared_ptr<Allocation> backing_store);
 
   // |DeviceBuffer|
   ~DeviceBufferGLES() override;
 
   const uint8_t* GetBufferData() const;
+
+  void UpdateBufferData(
+      const std::function<void(uint8_t*, size_t length)>& update_buffer_data);
 
   enum class BindingType {
     kArrayBuffer,
@@ -43,9 +47,12 @@ class DeviceBufferGLES final
   mutable uint32_t upload_generation_ = 0;
 
   // |DeviceBuffer|
-  bool CopyHostBuffer(const uint8_t* source,
-                      Range source_range,
-                      size_t offset) override;
+  uint8_t* OnGetContents() const override;
+
+  // |DeviceBuffer|
+  bool OnCopyHostBuffer(const uint8_t* source,
+                        Range source_range,
+                        size_t offset) override;
 
   // |DeviceBuffer|
   bool SetLabel(const std::string& label) override;
@@ -53,7 +60,11 @@ class DeviceBufferGLES final
   // |DeviceBuffer|
   bool SetLabel(const std::string& label, Range range) override;
 
-  FML_DISALLOW_COPY_AND_ASSIGN(DeviceBufferGLES);
+  DeviceBufferGLES(const DeviceBufferGLES&) = delete;
+
+  DeviceBufferGLES& operator=(const DeviceBufferGLES&) = delete;
 };
 
 }  // namespace impeller
+
+#endif  // FLUTTER_IMPELLER_RENDERER_BACKEND_GLES_DEVICE_BUFFER_GLES_H_

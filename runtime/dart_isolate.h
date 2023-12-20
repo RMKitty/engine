@@ -20,6 +20,7 @@
 #include "flutter/lib/ui/ui_dart_state.h"
 #include "flutter/lib/ui/window/platform_configuration.h"
 #include "flutter/runtime/dart_snapshot.h"
+#include "flutter/runtime/isolate_configuration.h"
 #include "third_party/dart/runtime/include/dart_api.h"
 #include "third_party/tonic/dart_state.h"
 
@@ -91,6 +92,7 @@ class DartIsolate : public UIDartState {
   ///             isolate and start over.
   ///
   enum class Phase {
+    // NOLINTBEGIN(readability-identifier-naming)
     //--------------------------------------------------------------------------
     /// The initial phase of all Dart isolates. This is an internal phase and
     /// callers can never get a reference to a Dart isolate in this phase.
@@ -103,7 +105,7 @@ class DartIsolate : public UIDartState {
     ///
     Uninitialized,
     //--------------------------------------------------------------------------
-    /// The Dart isolate has been been fully initialized but none of the
+    /// The Dart isolate has been fully initialized but none of the
     /// libraries referenced by that isolate have been loaded yet. This is an
     /// internal phase and callers can never get a reference to a Dart isolate
     /// in this phase.
@@ -132,6 +134,7 @@ class DartIsolate : public UIDartState {
     /// reference to a Dart isolate in this phase.
     ///
     Shutdown,
+    // NOLINTEND(readability-identifier-naming)
   };
 
   //----------------------------------------------------------------------------
@@ -208,10 +211,10 @@ class DartIsolate : public UIDartState {
   ///
   static std::weak_ptr<DartIsolate> CreateRunningRootIsolate(
       const Settings& settings,
-      fml::RefPtr<const DartSnapshot> isolate_snapshot,
+      const fml::RefPtr<const DartSnapshot>& isolate_snapshot,
       std::unique_ptr<PlatformConfiguration> platform_configuration,
       Flags flags,
-      fml::closure root_isolate_create_callback,
+      const fml::closure& root_isolate_create_callback,
       const fml::closure& isolate_create_callback,
       const fml::closure& isolate_shutdown_callback,
       std::optional<std::string> dart_entrypoint,
@@ -283,7 +286,7 @@ class DartIsolate : public UIDartState {
   ///             prepare the isolate.
   ///
   [[nodiscard]] bool PrepareForRunningFromKernel(
-      std::shared_ptr<const fml::Mapping> kernel,
+      const std::shared_ptr<const fml::Mapping>& kernel,
       bool child_isolate,
       bool last_piece);
 
@@ -382,8 +385,12 @@ class DartIsolate : public UIDartState {
       std::unique_ptr<const fml::Mapping> snapshot_instructions);
 
   void LoadLoadingUnitError(intptr_t loading_unit_id,
-                            const std::string error_message,
+                            const std::string& error_message,
                             bool transient);
+
+  DartIsolateGroupData& GetIsolateGroupData();
+
+  const DartIsolateGroupData& GetIsolateGroupData() const;
 
  private:
   friend class IsolateConfiguration;
@@ -406,12 +413,13 @@ class DartIsolate : public UIDartState {
   fml::RefPtr<fml::TaskRunner> message_handling_task_runner_;
   const bool may_insecurely_connect_to_all_domains_;
   std::string domain_network_policy_;
+  const bool is_spawning_in_group_;
 
   static std::weak_ptr<DartIsolate> CreateRootIsolate(
       const Settings& settings,
       fml::RefPtr<const DartSnapshot> isolate_snapshot,
       std::unique_ptr<PlatformConfiguration> platform_configuration,
-      Flags flags,
+      const Flags& flags,
       const fml::closure& isolate_create_callback,
       const fml::closure& isolate_shutdown_callback,
       const UIDartState::Context& context,
@@ -419,7 +427,8 @@ class DartIsolate : public UIDartState {
 
   DartIsolate(const Settings& settings,
               bool is_root_isolate,
-              const UIDartState::Context& context);
+              const UIDartState::Context& context,
+              bool is_spawning_in_group = false);
 
   //----------------------------------------------------------------------------
   /// @brief      Initializes the given (current) isolate.
@@ -432,9 +441,10 @@ class DartIsolate : public UIDartState {
   ///
   [[nodiscard]] bool Initialize(Dart_Isolate dart_isolate);
 
-  void SetMessageHandlingTaskRunner(fml::RefPtr<fml::TaskRunner> runner);
+  void SetMessageHandlingTaskRunner(const fml::RefPtr<fml::TaskRunner>& runner);
 
-  bool LoadKernel(std::shared_ptr<const fml::Mapping> mapping, bool last_piece);
+  bool LoadKernel(const std::shared_ptr<const fml::Mapping>& mapping,
+                  bool last_piece);
 
   [[nodiscard]] bool LoadLibraries();
 
@@ -443,10 +453,6 @@ class DartIsolate : public UIDartState {
   [[nodiscard]] bool MarkIsolateRunnable();
 
   void OnShutdownCallback();
-
-  DartIsolateGroupData& GetIsolateGroupData();
-
-  const DartIsolateGroupData& GetIsolateGroupData() const;
 
   // |Dart_IsolateGroupCreateCallback|
   static Dart_Isolate DartIsolateGroupCreateCallback(
@@ -481,9 +487,10 @@ class DartIsolate : public UIDartState {
       char** error,
       const IsolateMaker& make_isolate);
 
-  static bool InitializeIsolate(std::shared_ptr<DartIsolate> embedder_isolate,
-                                Dart_Isolate isolate,
-                                char** error);
+  static bool InitializeIsolate(
+      const std::shared_ptr<DartIsolate>& embedder_isolate,
+      Dart_Isolate isolate,
+      char** error);
 
   // |Dart_IsolateShutdownCallback|
   static void DartIsolateShutdownCallback(

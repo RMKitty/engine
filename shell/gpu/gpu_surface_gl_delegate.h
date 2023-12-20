@@ -22,17 +22,30 @@ struct GLFrameInfo {
   uint32_t height;
 };
 
+// A structure to represent the frame buffer information which is returned to
+// the rendering backend after requesting a frame buffer object.
+struct GLFBOInfo {
+  // The frame buffer's ID.
+  uint32_t fbo_id;
+  // The frame buffer's existing damage (i.e. damage since it was last used).
+  const std::optional<SkIRect> existing_damage;
+};
+
 // Information passed during presentation of a frame.
 struct GLPresentInfo {
   uint32_t fbo_id;
 
-  // Damage is a hint to compositor telling it which parts of front buffer
-  // need to be updated
-  const std::optional<SkIRect>& damage;
+  // The frame damage is a hint to compositor telling it which parts of front
+  // buffer need to be updated.
+  const std::optional<SkIRect>& frame_damage;
 
   // Time at which this frame is scheduled to be presented. This is a hint
   // that can be passed to the platform to drop queued frames.
   std::optional<fml::TimePoint> presentation_time = std::nullopt;
+
+  // The buffer damage refers to the region that needs to be set as damaged
+  // within the frame buffer.
+  const std::optional<SkIRect>& buffer_damage;
 };
 
 class GPUSurfaceGLDelegate {
@@ -43,7 +56,7 @@ class GPUSurfaceGLDelegate {
   virtual std::unique_ptr<GLContextResult> GLContextMakeCurrent() = 0;
 
   // Called to clear the current GL context on the thread. This may be called on
-  // either the GPU or IO threads.
+  // either the Raster or IO threads.
   virtual bool GLContextClearCurrent() = 0;
 
   // Inform the GL Context that there's going to be no writing beyond
@@ -54,8 +67,9 @@ class GPUSurfaceGLDelegate {
   // context and not any of the contexts dedicated for IO.
   virtual bool GLContextPresent(const GLPresentInfo& present_info) = 0;
 
-  // The ID of the main window bound framebuffer. Typically FBO0.
-  virtual intptr_t GLContextFBO(GLFrameInfo frame_info) const = 0;
+  // The information about the main window bound framebuffer. ID is Typically
+  // FBO0.
+  virtual GLFBOInfo GLContextFBO(GLFrameInfo frame_info) const = 0;
 
   // The rendering subsystem assumes that the ID of the main window bound
   // framebuffer remains constant throughout. If this assumption in incorrect,

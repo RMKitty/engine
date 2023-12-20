@@ -4,90 +4,51 @@
 
 #include "impeller/renderer/backend/vulkan/context_vk.h"
 
-#include <map>
-#include <optional>
-#include <set>
-#include <string>
+#include "fml/concurrent_message_loop.h"
 
-#include "flutter/fml/build_config.h"
+#ifdef FML_OS_ANDROID
+#include <pthread.h>
+#include <sys/resource.h>
+#include <sys/time.h>
+#endif  // FML_OS_ANDROID
+
+#include <map>
+#include <memory>
+#include <optional>
+#include <string>
+#include <vector>
+
+#include "flutter/fml/cpu_affinity.h"
 #include "flutter/fml/trace_event.h"
 #include "impeller/base/validation.h"
+#include "impeller/renderer/backend/vulkan/allocator_vk.h"
 #include "impeller/renderer/backend/vulkan/capabilities_vk.h"
-#include "impeller/renderer/backend/vulkan/vk.h"
+#include "impeller/renderer/backend/vulkan/command_buffer_vk.h"
+#include "impeller/renderer/backend/vulkan/command_encoder_vk.h"
+#include "impeller/renderer/backend/vulkan/command_pool_vk.h"
+#include "impeller/renderer/backend/vulkan/debug_report_vk.h"
+#include "impeller/renderer/backend/vulkan/fence_waiter_vk.h"
+#include "impeller/renderer/backend/vulkan/gpu_tracer_vk.h"
+#include "impeller/renderer/backend/vulkan/resource_manager_vk.h"
+#include "impeller/renderer/backend/vulkan/surface_context_vk.h"
+#include "impeller/renderer/capabilities.h"
 
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 namespace impeller {
 
-static std::set<std::string> kRequiredDeviceExtensions = {
-    VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-#if FML_OS_MACOSX
-    "VK_KHR_portability_subset",  // For Molten VK. No define present in header.
-#endif
-};
+// TODO(csg): Fix this after caps are reworked.
+static bool gHasValidationLayers = false;
 
-static bool HasRequiredQueues(const vk::PhysicalDevice& device) {
-  auto present_flags = vk::QueueFlags{};
-  for (const auto& queue : device.getQueueFamilyProperties()) {
-    if (queue.queueCount == 0) {
-      continue;
-    }
-    present_flags |= queue.queueFlags;
-  }
-  return static_cast<VkQueueFlags>(present_flags &
-                                   (vk::QueueFlagBits::eGraphics |
-                                    vk::QueueFlagBits::eCompute |
-                                    vk::QueueFlagBits::eTransfer));
-}
-
-static bool HasRequiredExtensions(const vk::PhysicalDevice& device) {
-  std::set<std::string> exts;
-  for (const auto& ext : device.enumerateDeviceExtensionProperties().value) {
-    exts.insert(ext.extensionName);
-  }
-  for (const auto& req_ext : kRequiredDeviceExtensions) {
-    if (exts.count(req_ext) != 1u) {
-      return false;
-    }
-  }
-  return true;
-}
-
-static vk::PhysicalDeviceFeatures GetRequiredPhysicalDeviceFeatures() {
-  vk::PhysicalDeviceFeatures features;
-  features.setRobustBufferAccess(true);
-  return features;
-};
-
-static bool HasRequiredProperties(const vk::PhysicalDevice& device) {
-  auto properties = device.getProperties();
-  if (!(properties.limits.framebufferColorSampleCounts &
-        (vk::SampleCountFlagBits::e1 | vk::SampleCountFlagBits::e4))) {
-    return false;
-  }
-  return true;
-}
-
-static bool IsPhysicalDeviceCompatible(const vk::PhysicalDevice& device) {
-  if (!HasRequiredQueues(device)) {
-    VALIDATION_LOG << "Device doesn't have required queues.";
-    return false;
-  }
-  if (!HasRequiredExtensions(device)) {
-    VALIDATION_LOG << "Device doesn't have required extensions.";
-    return false;
-  }
-  if (!HasRequiredProperties(device)) {
-    VALIDATION_LOG << "Device doesn't have required properties.";
-    return false;
-  }
-  return true;
+bool HasValidationLayers() {
+  return gHasValidationLayers;
 }
 
 static std::optional<vk::PhysicalDevice> PickPhysicalDevice(
+    const CapabilitiesVK& caps,
     const vk::Instance& instance) {
   for (const auto& device : instance.enumeratePhysicalDevices().value) {
-    if (IsPhysicalDeviceCompatible(device)) {
+    if (caps.GetEnabledDeviceFeatures(device).has_value()) {
       return device;
     }
   }
@@ -95,7 +56,7 @@ static std::optional<vk::PhysicalDevice> PickPhysicalDevice(
 }
 
 static std::vector<vk::DeviceQueueCreateInfo> GetQueueCreateInfos(
-    std::initializer_list<QueueVK> queues) {
+    std::initializer_list<QueueIndexVK> queues) {
   std::map<size_t /* family */, size_t /* index */> family_index_map;
   for (const auto& queue : queues) {
     family_index_map[queue.family] = 0;
@@ -117,8 +78,8 @@ static std::vector<vk::DeviceQueueCreateInfo> GetQueueCreateInfos(
   return infos;
 }
 
-static std::optional<QueueVK> PickQueue(const vk::PhysicalDevice& device,
-                                        vk::QueueFlagBits flags) {
+static std::optional<QueueIndexVK> PickQueue(const vk::PhysicalDevice& device,
+                                             vk::QueueFlagBits flags) {
   // This can be modified to ensure that dedicated queues are returned for each
   // queue type depending on support.
   const auto families = device.getQueueFamilyProperties();
@@ -126,222 +87,267 @@ static std::optional<QueueVK> PickQueue(const vk::PhysicalDevice& device,
     if (!(families[i].queueFlags & flags)) {
       continue;
     }
-    return QueueVK{.family = i, .index = 0};
+    return QueueIndexVK{.family = i, .index = 0};
   }
   return std::nullopt;
 }
 
-std::shared_ptr<ContextVK> ContextVK::Create(
-    PFN_vkGetInstanceProcAddr proc_address_callback,
-    const std::vector<std::shared_ptr<fml::Mapping>>& shader_libraries_data,
-    const std::shared_ptr<const fml::Mapping>& pipeline_cache_data,
-    std::shared_ptr<fml::ConcurrentTaskRunner> worker_task_runner,
-    const std::string& label) {
-  auto context = std::shared_ptr<ContextVK>(new ContextVK(
-      proc_address_callback,          //
-      shader_libraries_data,          //
-      pipeline_cache_data,            //
-      std::move(worker_task_runner),  //
-      label                           //
-      ));
+std::shared_ptr<ContextVK> ContextVK::Create(Settings settings) {
+  auto context = std::shared_ptr<ContextVK>(new ContextVK());
+  context->Setup(std::move(settings));
   if (!context->IsValid()) {
     return nullptr;
   }
   return context;
 }
 
-ContextVK::ContextVK(
-    PFN_vkGetInstanceProcAddr proc_address_callback,
-    const std::vector<std::shared_ptr<fml::Mapping>>& shader_libraries_data,
-    const std::shared_ptr<const fml::Mapping>& pipeline_cache_data,
-    std::shared_ptr<fml::ConcurrentTaskRunner> worker_task_runner,
-    const std::string& label)
-    : worker_task_runner_(std::move(worker_task_runner)) {
-  TRACE_EVENT0("impeller", "ContextVK::Create");
+namespace {
+thread_local uint64_t tls_context_count = 0;
+uint64_t CalculateHash(void* ptr) {
+  // You could make a context once per nanosecond for 584 years on one thread
+  // before this overflows.
+  return ++tls_context_count;
+}
+}  // namespace
 
-  if (!worker_task_runner_) {
-    VALIDATION_LOG << "Invalid worker task runner.";
+ContextVK::ContextVK() : hash_(CalculateHash(this)) {}
+
+ContextVK::~ContextVK() {
+  if (device_holder_ && device_holder_->device) {
+    [[maybe_unused]] auto result = device_holder_->device->waitIdle();
+  }
+  CommandPoolRecyclerVK::DestroyThreadLocalPools(this);
+}
+
+Context::BackendType ContextVK::GetBackendType() const {
+  return Context::BackendType::kVulkan;
+}
+
+void ContextVK::Setup(Settings settings) {
+  TRACE_EVENT0("impeller", "ContextVK::Setup");
+
+  if (!settings.proc_address_callback) {
     return;
   }
+
+  queue_submit_thread_ = std::make_unique<fml::Thread>("QueueSubmitThread");
+  queue_submit_thread_->GetTaskRunner()->PostTask([]() {
+    // submitKHR is extremely cheap and mostly blocks on an internal fence.
+    fml::RequestAffinity(fml::CpuAffinity::kEfficiency);
+  });
+
+  raster_message_loop_ = fml::ConcurrentMessageLoop::Create(
+      std::min(4u, std::thread::hardware_concurrency()));
+  raster_message_loop_->PostTaskToAllWorkers([]() {
+    // Currently we only use the worker task pool for small parts of a frame
+    // workload, if this changes this setting may need to be adjusted.
+    fml::RequestAffinity(fml::CpuAffinity::kNotPerformance);
+#ifdef FML_OS_ANDROID
+    if (::setpriority(PRIO_PROCESS, gettid(), -5) != 0) {
+      FML_LOG(ERROR) << "Failed to set Workers task runner priority";
+    }
+#endif  // FML_OS_ANDROID
+  });
 
   auto& dispatcher = VULKAN_HPP_DEFAULT_DISPATCHER;
-  dispatcher.init(proc_address_callback);
+  dispatcher.init(settings.proc_address_callback);
 
-  auto capabilities = std::make_unique<CapabilitiesVK>();
+  // Enable Vulkan validation if either:
+  // 1. The user has explicitly enabled it.
+  // 2. We are in a combination of debug mode, and running on Android.
+  // (It's possible 2 is overly conservative and we can simplify this)
+  auto enable_validation = settings.enable_validation;
+
+#if defined(FML_OS_ANDROID) && !defined(NDEBUG)
+  enable_validation = true;
+#endif
+
+  auto caps =
+      std::shared_ptr<CapabilitiesVK>(new CapabilitiesVK(enable_validation));
+
+  if (!caps->IsValid()) {
+    VALIDATION_LOG << "Could not determine device capabilities.";
+    return;
+  }
+
+  gHasValidationLayers = caps->AreValidationsEnabled();
+
+  auto enabled_layers = caps->GetEnabledLayers();
+  auto enabled_extensions = caps->GetEnabledInstanceExtensions();
+
+  if (!enabled_layers.has_value() || !enabled_extensions.has_value()) {
+    VALIDATION_LOG << "Device has insufficient capabilities.";
+    return;
+  }
 
   vk::InstanceCreateFlags instance_flags = {};
-  std::vector<const char*> enabled_layers;
-  std::vector<const char*> enabled_extensions;
 
-// This define may need to change into a runtime check if using SwiftShader on
-// Mac.
-#if FML_OS_MACOSX
-  //----------------------------------------------------------------------------
-  /// Ensure we need any Vulkan implementations that are not fully compliant
-  /// with the requested Vulkan Spec. This is necessary for MoltenVK on Mac
-  /// (backed by Metal).
-  ///
-  if (!capabilities->HasExtension(
-          VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME)) {
-    VALIDATION_LOG << "On Mac: Required extension "
-                   << VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME
-                   << " absent.";
-    return;
+  if (std::find(enabled_extensions.value().begin(),
+                enabled_extensions.value().end(),
+                "VK_KHR_portability_enumeration") !=
+      enabled_extensions.value().end()) {
+    instance_flags |= vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR;
   }
-  // Molten VK on Mac is not fully compliant. We opt into being OK not getting
-  // back a fully compliant version of a Vulkan implementation.
-  enabled_extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
-  instance_flags |= vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR;
 
-  if (!capabilities->HasExtension(
-          VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME)) {
-    VALIDATION_LOG << "On Mac: Required extension "
-                   << VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME
-                   << " absent.";
-    return;
+  std::vector<const char*> enabled_layers_c;
+  std::vector<const char*> enabled_extensions_c;
+
+  for (const auto& layer : enabled_layers.value()) {
+    enabled_layers_c.push_back(layer.c_str());
   }
-  // This is dependency of VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME which
-  // is a requirement for opting into Molten VK on Mac.
-  enabled_extensions.push_back(
-      VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
-#endif  // FML_OS_MACOSX
 
-  //----------------------------------------------------------------------------
-  /// Even though this is a WSI responsibility, require the surface extension
-  /// for swapchains.
-  if (!capabilities->HasExtension(VK_KHR_SURFACE_EXTENSION_NAME)) {
-    VALIDATION_LOG << "Required extension " VK_KHR_SURFACE_EXTENSION_NAME
-                   << " absent.";
-    return;
-  }
-  enabled_extensions.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
-
-  //----------------------------------------------------------------------------
-  /// Enable any and all validation as well as debug toggles.
-  ///
-  auto has_debug_utils = false;
-  constexpr const char* kKhronosValidationLayerName =
-      "VK_LAYER_KHRONOS_validation";
-  if (capabilities->HasLayer(kKhronosValidationLayerName)) {
-    enabled_layers.push_back(kKhronosValidationLayerName);
-    if (capabilities->HasLayerExtension(kKhronosValidationLayerName,
-                                        VK_EXT_DEBUG_UTILS_EXTENSION_NAME)) {
-      enabled_extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-      has_debug_utils = true;
-    } else {
-      FML_LOG(ERROR) << "Vulkan debug utils are absent.";
-    }
-  } else {
-    FML_LOG(ERROR) << "Vulkan validation layers are absent.";
+  for (const auto& ext : enabled_extensions.value()) {
+    enabled_extensions_c.push_back(ext.c_str());
   }
 
   vk::ApplicationInfo application_info;
   application_info.setApplicationVersion(VK_API_VERSION_1_0);
-  application_info.setApiVersion(VK_API_VERSION_1_0);
+  application_info.setApiVersion(VK_API_VERSION_1_1);
   application_info.setEngineVersion(VK_API_VERSION_1_0);
   application_info.setPEngineName("Impeller");
   application_info.setPApplicationName("Impeller");
 
-  vk::InstanceCreateInfo instance_info;
-  instance_info.setPEnabledLayerNames(enabled_layers);
-  instance_info.setPEnabledExtensionNames(enabled_extensions);
+  vk::StructureChain<vk::InstanceCreateInfo, vk::ValidationFeaturesEXT>
+      instance_chain;
+
+  if (!caps->AreValidationsEnabled()) {
+    instance_chain.unlink<vk::ValidationFeaturesEXT>();
+  }
+
+  std::vector<vk::ValidationFeatureEnableEXT> enabled_validations = {
+      vk::ValidationFeatureEnableEXT::eSynchronizationValidation,
+  };
+
+  auto validation = instance_chain.get<vk::ValidationFeaturesEXT>();
+  validation.setEnabledValidationFeatures(enabled_validations);
+
+  auto instance_info = instance_chain.get<vk::InstanceCreateInfo>();
+  instance_info.setPEnabledLayerNames(enabled_layers_c);
+  instance_info.setPEnabledExtensionNames(enabled_extensions_c);
   instance_info.setPApplicationInfo(&application_info);
   instance_info.setFlags(instance_flags);
 
-  auto instance = vk::createInstanceUnique(instance_info);
-  if (instance.result != vk::Result::eSuccess) {
-    FML_LOG(ERROR) << "Could not create instance: "
-                   << vk::to_string(instance.result);
-    return;
-  }
-
-  dispatcher.init(instance.value.get());
-
-  vk::UniqueDebugUtilsMessengerEXT debug_messenger;
-
-  if (has_debug_utils) {
-    vk::DebugUtilsMessengerCreateInfoEXT debug_messenger_info;
-
-    debug_messenger_info.messageSeverity =
-        vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
-        vk::DebugUtilsMessageSeverityFlagBitsEXT::eError;
-    debug_messenger_info.messageType =
-        vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
-        vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance |
-        vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation;
-    debug_messenger_info.pUserData = nullptr;
-    debug_messenger_info.pfnUserCallback =
-        [](VkDebugUtilsMessageSeverityFlagBitsEXT severity,
-           VkDebugUtilsMessageTypeFlagsEXT type,
-           const VkDebugUtilsMessengerCallbackDataEXT* data,
-           void* user_data) -> VkBool32 {
-      FML_DCHECK(false)
-          << vk::to_string(vk::DebugUtilsMessageSeverityFlagBitsEXT{severity})
-          << ": " << data->pMessage;
-      return true;
-    };
-
-    auto debug_messenger_result =
-        instance.value->createDebugUtilsMessengerEXTUnique(
-            debug_messenger_info);
-
-    if (debug_messenger_result.result != vk::Result::eSuccess) {
-      FML_LOG(ERROR) << "Could not create debug messenger: "
-                     << vk::to_string(debug_messenger_result.result);
+  auto device_holder = std::make_shared<DeviceHolderImpl>();
+  {
+    auto instance = vk::createInstanceUnique(instance_info);
+    if (instance.result != vk::Result::eSuccess) {
+      VALIDATION_LOG << "Could not create Vulkan instance: "
+                     << vk::to_string(instance.result);
       return;
     }
-
-    debug_messenger = std::move(debug_messenger_result.value);
+    device_holder->instance = std::move(instance.value);
   }
+  dispatcher.init(device_holder->instance.get());
 
-  auto physical_device = PickPhysicalDevice(instance.value.get());
-  if (!physical_device.has_value()) {
-    VALIDATION_LOG << "No valid Vulkan device found.";
+  //----------------------------------------------------------------------------
+  /// Setup the debug report.
+  ///
+  /// Do this as early as possible since we could use the debug report from
+  /// initialization issues.
+  ///
+  auto debug_report =
+      std::make_unique<DebugReportVK>(*caps, device_holder->instance.get());
+
+  if (!debug_report->IsValid()) {
+    VALIDATION_LOG << "Could not set up debug report.";
     return;
   }
 
+  //----------------------------------------------------------------------------
+  /// Pick the physical device.
+  ///
+  {
+    auto physical_device =
+        PickPhysicalDevice(*caps, device_holder->instance.get());
+    if (!physical_device.has_value()) {
+      VALIDATION_LOG << "No valid Vulkan device found.";
+      return;
+    }
+    device_holder->physical_device = physical_device.value();
+  }
+
+  //----------------------------------------------------------------------------
+  /// Pick device queues.
+  ///
   auto graphics_queue =
-      PickQueue(physical_device.value(), vk::QueueFlagBits::eGraphics);
+      PickQueue(device_holder->physical_device, vk::QueueFlagBits::eGraphics);
   auto transfer_queue =
-      PickQueue(physical_device.value(), vk::QueueFlagBits::eTransfer);
+      PickQueue(device_holder->physical_device, vk::QueueFlagBits::eTransfer);
   auto compute_queue =
-      PickQueue(physical_device.value(), vk::QueueFlagBits::eCompute);
+      PickQueue(device_holder->physical_device, vk::QueueFlagBits::eCompute);
 
-  if (!graphics_queue.has_value() || !transfer_queue.has_value() ||
-      !compute_queue.has_value()) {
-    VALIDATION_LOG << "Could not pick device queues.";
+  if (!graphics_queue.has_value()) {
+    VALIDATION_LOG << "Could not pick graphics queue.";
+    return;
+  }
+  if (!transfer_queue.has_value()) {
+    FML_LOG(INFO) << "Dedicated transfer queue not avialable.";
+    transfer_queue = graphics_queue.value();
+  }
+  if (!compute_queue.has_value()) {
+    VALIDATION_LOG << "Could not pick compute queue.";
     return;
   }
 
-  std::vector<const char*> required_extensions;
-  for (const auto& ext : kRequiredDeviceExtensions) {
-    required_extensions.push_back(ext.data());
+  //----------------------------------------------------------------------------
+  /// Create the logical device.
+  ///
+  auto enabled_device_extensions =
+      caps->GetEnabledDeviceExtensions(device_holder->physical_device);
+  if (!enabled_device_extensions.has_value()) {
+    // This shouldn't happen since we already did device selection. But
+    // doesn't hurt to check again.
+    return;
+  }
+
+  std::vector<const char*> enabled_device_extensions_c;
+  for (const auto& ext : enabled_device_extensions.value()) {
+    enabled_device_extensions_c.push_back(ext.c_str());
   }
 
   const auto queue_create_infos = GetQueueCreateInfos(
       {graphics_queue.value(), compute_queue.value(), transfer_queue.value()});
 
-  const auto required_features = GetRequiredPhysicalDeviceFeatures();
-
-  vk::DeviceCreateInfo device_info;
-  device_info.setQueueCreateInfos(queue_create_infos);
-  device_info.setPEnabledExtensionNames(required_extensions);
-  device_info.setPEnabledFeatures(&required_features);
-  // Device layers are deprecated and ignored.
-
-  auto device = physical_device->createDeviceUnique(device_info);
-  if (device.result != vk::Result::eSuccess) {
-    VALIDATION_LOG << "Could not create logical device.";
+  const auto enabled_features =
+      caps->GetEnabledDeviceFeatures(device_holder->physical_device);
+  if (!enabled_features.has_value()) {
+    // This shouldn't happen since the device can't be picked if this was not
+    // true. But doesn't hurt to check.
     return;
   }
 
+  vk::DeviceCreateInfo device_info;
+
+  device_info.setQueueCreateInfos(queue_create_infos);
+  device_info.setPEnabledExtensionNames(enabled_device_extensions_c);
+  device_info.setPEnabledFeatures(&enabled_features.value());
+  // Device layers are deprecated and ignored.
+
+  {
+    auto device_result =
+        device_holder->physical_device.createDeviceUnique(device_info);
+    if (device_result.result != vk::Result::eSuccess) {
+      VALIDATION_LOG << "Could not create logical device.";
+      return;
+    }
+    device_holder->device = std::move(device_result.value);
+  }
+
+  if (!caps->SetPhysicalDevice(device_holder->physical_device)) {
+    VALIDATION_LOG << "Capabilities could not be updated.";
+    return;
+  }
+
+  //----------------------------------------------------------------------------
+  /// Create the allocator.
+  ///
   auto allocator = std::shared_ptr<AllocatorVK>(new AllocatorVK(
-      application_info.apiVersion,       //
-      physical_device.value(),           //
-      device.value.get(),                //
-      instance.value.get(),              //
-      dispatcher.vkGetInstanceProcAddr,  //
-      dispatcher.vkGetDeviceProcAddr     //
+      weak_from_this(),                //
+      application_info.apiVersion,     //
+      device_holder->physical_device,  //
+      device_holder,                   //
+      device_holder->instance.get(),   //
+      *caps                            //
       ));
 
   if (!allocator->IsValid()) {
@@ -349,10 +355,14 @@ ContextVK::ContextVK(
     return;
   }
 
+  //----------------------------------------------------------------------------
+  /// Setup the pipeline library.
+  ///
   auto pipeline_library = std::shared_ptr<PipelineLibraryVK>(
-      new PipelineLibraryVK(device.value.get(),   //
-                            pipeline_cache_data,  //
-                            worker_task_runner_   //
+      new PipelineLibraryVK(device_holder,                         //
+                            caps,                                  //
+                            std::move(settings.cache_directory),   //
+                            raster_message_loop_->GetTaskRunner()  //
                             ));
 
   if (!pipeline_library->IsValid()) {
@@ -360,44 +370,108 @@ ContextVK::ContextVK(
     return;
   }
 
-  auto sampler_library = std::shared_ptr<SamplerLibraryVK>(
-      new SamplerLibraryVK(device.value.get()));
+  auto sampler_library =
+      std::shared_ptr<SamplerLibraryVK>(new SamplerLibraryVK(device_holder));
 
   auto shader_library = std::shared_ptr<ShaderLibraryVK>(
-      new ShaderLibraryVK(device.value.get(), shader_libraries_data));
+      new ShaderLibraryVK(device_holder,                   //
+                          settings.shader_libraries_data)  //
+  );
 
   if (!shader_library->IsValid()) {
     VALIDATION_LOG << "Could not create shader library.";
     return;
   }
 
-  instance_ = std::move(instance.value);
-  debug_messenger_ = std::move(debug_messenger);
-  device_ = std::move(device.value);
+  //----------------------------------------------------------------------------
+  /// Create the fence waiter.
+  ///
+  auto fence_waiter =
+      std::shared_ptr<FenceWaiterVK>(new FenceWaiterVK(device_holder));
+
+  //----------------------------------------------------------------------------
+  /// Create the resource manager and command pool recycler.
+  ///
+  auto resource_manager = ResourceManagerVK::Create();
+  if (!resource_manager) {
+    VALIDATION_LOG << "Could not create resource manager.";
+    return;
+  }
+
+  auto command_pool_recycler =
+      std::make_shared<CommandPoolRecyclerVK>(weak_from_this());
+  if (!command_pool_recycler) {
+    VALIDATION_LOG << "Could not create command pool recycler.";
+    return;
+  }
+
+  auto descriptor_pool_recycler =
+      std::make_shared<DescriptorPoolRecyclerVK>(weak_from_this());
+  if (!descriptor_pool_recycler) {
+    VALIDATION_LOG << "Could not create descriptor pool recycler.";
+    return;
+  }
+
+  //----------------------------------------------------------------------------
+  /// Fetch the queues.
+  ///
+  QueuesVK queues(device_holder->device.get(),  //
+                  graphics_queue.value(),       //
+                  compute_queue.value(),        //
+                  transfer_queue.value()        //
+  );
+  if (!queues.IsValid()) {
+    VALIDATION_LOG << "Could not fetch device queues.";
+    return;
+  }
+
+  VkPhysicalDeviceProperties physical_device_properties;
+  dispatcher.vkGetPhysicalDeviceProperties(device_holder->physical_device,
+                                           &physical_device_properties);
+
+  //----------------------------------------------------------------------------
+  /// All done!
+  ///
+  device_holder_ = std::move(device_holder);
+  debug_report_ = std::move(debug_report);
   allocator_ = std::move(allocator);
   shader_library_ = std::move(shader_library);
   sampler_library_ = std::move(sampler_library);
   pipeline_library_ = std::move(pipeline_library);
-  graphics_queue_ =
-      device_->getQueue(graphics_queue->family, graphics_queue->index);
-  compute_queue_ =
-      device_->getQueue(compute_queue->family, compute_queue->index);
-  transfer_queue_ =
-      device_->getQueue(transfer_queue->family, transfer_queue->index);
+  queues_ = std::move(queues);
+  device_capabilities_ = std::move(caps);
+  fence_waiter_ = std::move(fence_waiter);
+  resource_manager_ = std::move(resource_manager);
+  command_pool_recycler_ = std::move(command_pool_recycler);
+  descriptor_pool_recycler_ = std::move(descriptor_pool_recycler);
+  device_name_ = std::string(physical_device_properties.deviceName);
   is_valid_ = true;
+
+  // Create the GPU Tracer later because it depends on state from
+  // the ContextVK.
+  gpu_tracer_ = std::make_shared<GPUTracerVK>(GetDeviceHolder());
+
+  //----------------------------------------------------------------------------
+  /// Label all the relevant objects. This happens after setup so that the
+  /// debug messengers have had a chance to be set up.
+  ///
+  SetDebugName(GetDevice(), device_holder_->device.get(), "ImpellerDevice");
 }
 
-ContextVK::~ContextVK() = default;
+void ContextVK::SetOffscreenFormat(PixelFormat pixel_format) {
+  CapabilitiesVK::Cast(*device_capabilities_).SetOffscreenFormat(pixel_format);
+}
+
+// |Context|
+std::string ContextVK::DescribeGpuModel() const {
+  return device_name_;
+}
 
 bool ContextVK::IsValid() const {
   return is_valid_;
 }
 
-std::shared_ptr<Allocator> ContextVK::GetPermanentsAllocator() const {
-  return allocator_;
-}
-
-std::shared_ptr<Allocator> ContextVK::GetTransientsAllocator() const {
+std::shared_ptr<Allocator> ContextVK::GetResourceAllocator() const {
   return allocator_;
 }
 
@@ -413,12 +487,79 @@ std::shared_ptr<PipelineLibrary> ContextVK::GetPipelineLibrary() const {
   return pipeline_library_;
 }
 
-std::shared_ptr<CommandBuffer> ContextVK::CreateRenderCommandBuffer() const {
-  FML_UNREACHABLE();
+std::shared_ptr<CommandBuffer> ContextVK::CreateCommandBuffer() const {
+  return std::shared_ptr<CommandBufferVK>(
+      new CommandBufferVK(shared_from_this(),                     //
+                          CreateGraphicsCommandEncoderFactory())  //
+  );
 }
 
-std::shared_ptr<CommandBuffer> ContextVK::CreateTransferCommandBuffer() const {
-  FML_UNREACHABLE();
+vk::Instance ContextVK::GetInstance() const {
+  return *device_holder_->instance;
+}
+
+const vk::Device& ContextVK::GetDevice() const {
+  return device_holder_->device.get();
+}
+
+const fml::RefPtr<fml::TaskRunner> ContextVK::GetQueueSubmitRunner() const {
+  return queue_submit_thread_->GetTaskRunner();
+}
+
+const std::shared_ptr<fml::ConcurrentTaskRunner>
+ContextVK::GetConcurrentWorkerTaskRunner() const {
+  return raster_message_loop_->GetTaskRunner();
+}
+
+void ContextVK::Shutdown() {
+  // There are multiple objects, for example |CommandPoolVK|, that in their
+  // destructors make a strong reference to |ContextVK|. Resetting these shared
+  // pointers ensures that cleanup happens in a correct order.
+  //
+  // tl;dr: Without it, we get thread::join failures on shutdown.
+  fence_waiter_.reset();
+  resource_manager_.reset();
+
+  queue_submit_thread_->Join();
+  raster_message_loop_->Terminate();
+}
+
+std::shared_ptr<SurfaceContextVK> ContextVK::CreateSurfaceContext() {
+  return std::make_shared<SurfaceContextVK>(shared_from_this());
+}
+
+const std::shared_ptr<const Capabilities>& ContextVK::GetCapabilities() const {
+  return device_capabilities_;
+}
+
+const std::shared_ptr<QueueVK>& ContextVK::GetGraphicsQueue() const {
+  return queues_.graphics_queue;
+}
+
+vk::PhysicalDevice ContextVK::GetPhysicalDevice() const {
+  return device_holder_->physical_device;
+}
+
+std::shared_ptr<FenceWaiterVK> ContextVK::GetFenceWaiter() const {
+  return fence_waiter_;
+}
+
+std::shared_ptr<ResourceManagerVK> ContextVK::GetResourceManager() const {
+  return resource_manager_;
+}
+
+std::shared_ptr<CommandPoolRecyclerVK> ContextVK::GetCommandPoolRecycler()
+    const {
+  return command_pool_recycler_;
+}
+
+std::unique_ptr<CommandEncoderFactoryVK>
+ContextVK::CreateGraphicsCommandEncoderFactory() const {
+  return std::make_unique<CommandEncoderFactoryVK>(weak_from_this());
+}
+
+std::shared_ptr<GPUTracerVK> ContextVK::GetGPUTracer() const {
+  return gpu_tracer_;
 }
 
 }  // namespace impeller

@@ -11,6 +11,9 @@
 #include "impeller/archivist/archive_location.h"
 #include "impeller/archivist/archivist_fixture.h"
 
+// TODO(zanderso): https://github.com/flutter/flutter/issues/127701
+// NOLINTBEGIN(bugprone-unchecked-optional-access)
+
 namespace impeller {
 namespace testing {
 
@@ -44,7 +47,9 @@ class Sample : public Archivable {
   uint64_t some_data_;
   PrimaryKey name_ = ++LastSample;
 
-  FML_DISALLOW_COPY_AND_ASSIGN(Sample);
+  Sample(const Sample&) = delete;
+
+  Sample& operator=(const Sample&) = delete;
 };
 
 const ArchiveDef Sample::kArchiveDefinition = {
@@ -92,7 +97,9 @@ class SampleWithVector : public Archivable {
 
  private:
   std::vector<Sample> samples_;
-  FML_DISALLOW_COPY_AND_ASSIGN(SampleWithVector);
+  SampleWithVector(const SampleWithVector&) = delete;
+
+  SampleWithVector& operator=(const SampleWithVector&) = delete;
 };
 
 const ArchiveDef SampleWithVector::kArchiveDefinition = {
@@ -198,3 +205,5 @@ TEST_F(ArchiveTest, CanReadWriteVectorOfArchivables) {
 
 }  // namespace testing
 }  // namespace impeller
+
+// NOLINTEND(bugprone-unchecked-optional-access)

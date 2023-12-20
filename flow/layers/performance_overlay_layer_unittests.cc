@@ -10,13 +10,15 @@
 #include "flutter/flow/flow_test_utils.h"
 #include "flutter/flow/raster_cache.h"
 #include "flutter/flow/testing/layer_test.h"
+#include "flutter/shell/common/base64.h"
 #include "flutter/testing/mock_canvas.h"
 #include "third_party/skia/include/core/SkData.h"
+#include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkSerialProcs.h"
 #include "third_party/skia/include/core/SkStream.h"
 #include "third_party/skia/include/core/SkSurface.h"
 #include "third_party/skia/include/core/SkTextBlob.h"
-#include "third_party/skia/include/utils/SkBase64.h"
+#include "third_party/skia/include/encode/SkPngEncoder.h"
 
 namespace flutter {
 namespace testing {
@@ -54,23 +56,24 @@ static void TestPerformanceOverlayLayerGold(int refresh_rate) {
   }
 
   const SkImageInfo image_info = SkImageInfo::MakeN32Premul(1000, 1000);
-  sk_sp<SkSurface> surface = SkSurface::MakeRaster(image_info);
+  sk_sp<SkSurface> surface = SkSurfaces::Raster(image_info);
+  DlSkCanvasAdapter canvas(surface->getCanvas());
 
   ASSERT_TRUE(surface != nullptr);
 
-  flutter::TextureRegistry unused_texture_registry;
-  flutter::PaintContext paintContext = {
+  LayerStateStack state_stack;
+  state_stack.set_delegate(&canvas);
+
+  flutter::PaintContext paint_context = {
       // clang-format off
-      .internal_nodes_canvas         = nullptr,
-      .leaf_nodes_canvas             = surface->getCanvas(),
+      .state_stack                   = state_stack,
+      .canvas                        = &canvas,
       .gr_context                    = nullptr,
       .view_embedder                 = nullptr,
       .raster_time                   = mock_stopwatch,
       .ui_time                       = mock_stopwatch,
-      .texture_registry              = unused_texture_registry,
+      .texture_registry              = nullptr,
       .raster_cache                  = nullptr,
-      .checkerboard_offscreen_layers = false,
-      .frame_device_pixel_ratio      = 1.0f,
       // clang-format on
   };
 
@@ -84,10 +87,11 @@ static void TestPerformanceOverlayLayerGold(int refresh_rate) {
       flutter::GetFontFile().c_str());
   layer.set_paint_bounds(SkRect::MakeWH(1000, 400));
   surface->getCanvas()->clear(SK_ColorTRANSPARENT);
-  layer.Paint(paintContext);
+  layer.Paint(paint_context);
 
   sk_sp<SkImage> snapshot = surface->makeImageSnapshot();
-  sk_sp<SkData> snapshot_data = snapshot->encodeToData();
+  sk_sp<SkData> snapshot_data =
+      SkPngEncoder::Encode(nullptr, snapshot.get(), {});
 
   sk_sp<SkData> golden_data =
       SkData::MakeFromFileName(golden_file_path.c_str());
@@ -100,18 +104,17 @@ static void TestPerformanceOverlayLayerGold(int refresh_rate) {
   // platforms.
 #if !defined(FML_OS_LINUX)
   GTEST_SKIP() << "Skipping golden tests on non-Linux OSes";
-#endif  // FML_OS_LINUX
+#else
   const bool golden_data_matches = golden_data->equals(snapshot_data.get());
   if (!golden_data_matches) {
     SkFILEWStream wstream(new_golden_file_path.c_str());
     wstream.write(snapshot_data->data(), snapshot_data->size());
     wstream.flush();
 
-    size_t b64_size =
-        SkBase64::Encode(snapshot_data->data(), snapshot_data->size(), nullptr);
+    size_t b64_size = Base64::EncodedSize(snapshot_data->size());
     sk_sp<SkData> b64_data = SkData::MakeUninitialized(b64_size + 1);
     char* b64_char = static_cast<char*>(b64_data->writable_data());
-    SkBase64::Encode(snapshot_data->data(), snapshot_data->size(), b64_char);
+    Base64::Encode(snapshot_data->data(), snapshot_data->size(), b64_char);
     b64_char[b64_size] = 0;  // make it null terminated for printing
 
     EXPECT_TRUE(golden_data_matches)
@@ -122,6 +125,7 @@ static void TestPerformanceOverlayLayerGold(int refresh_rate) {
         << "See also the base64 encoded " << new_golden_file_path << ":\n"
         << b64_char;
   }
+#endif  // FML_OS_LINUX
 }
 
 }  // namespace
@@ -132,7 +136,7 @@ TEST_F(PerformanceOverlayLayerTest, PaintingEmptyLayerDies) {
   const uint64_t overlay_opts = kVisualizeRasterizerStatistics;
   auto layer = std::make_shared<PerformanceOverlayLayer>(overlay_opts);
 
-  layer->Preroll(preroll_context(), SkMatrix());
+  layer->Preroll(preroll_context());
   EXPECT_EQ(layer->paint_bounds(), SkRect::MakeEmpty());
   EXPECT_FALSE(layer->needs_painting(paint_context()));
 
@@ -149,7 +153,7 @@ TEST_F(PerformanceOverlayLayerTest, InvalidOptions) {
   // this a constructor parameter and move the set_paint_bounds into Preroll
   layer->set_paint_bounds(layer_bounds);
 
-  layer->Preroll(preroll_context(), SkMatrix());
+  layer->Preroll(preroll_context());
   EXPECT_EQ(layer->paint_bounds(), layer_bounds);
   EXPECT_TRUE(layer->needs_painting(paint_context()));
 
@@ -167,7 +171,7 @@ TEST_F(PerformanceOverlayLayerTest, SimpleRasterizerStatistics) {
   // this a constructor parameter and move the set_paint_bounds into Preroll
   layer->set_paint_bounds(layer_bounds);
 
-  layer->Preroll(preroll_context(), SkMatrix());
+  layer->Preroll(preroll_context());
   EXPECT_EQ(layer->paint_bounds(), layer_bounds);
   EXPECT_TRUE(layer->needs_painting(paint_context()));
 
@@ -175,8 +179,8 @@ TEST_F(PerformanceOverlayLayerTest, SimpleRasterizerStatistics) {
   auto overlay_text = PerformanceOverlayLayer::MakeStatisticsText(
       paint_context().raster_time, "Raster", "");
   auto overlay_text_data = overlay_text->serialize(SkSerialProcs{});
-  SkPaint text_paint;
-  text_paint.setColor(SK_ColorGRAY);
+  // Historically SK_ColorGRAY (== 0xFF888888) was used here
+  DlPaint text_paint(DlColor(0xFF888888));
   SkPoint text_position = SkPoint::Make(16.0f, 22.0f);
 
   // TODO(https://github.com/flutter/flutter/issues/82202): Remove once the
@@ -198,20 +202,20 @@ TEST_F(PerformanceOverlayLayerTest, MarkAsDirtyWhenResized) {
   const uint64_t overlay_opts = kVisualizeRasterizerStatistics;
   auto layer = std::make_shared<PerformanceOverlayLayer>(overlay_opts);
   layer->set_paint_bounds(SkRect::MakeLTRB(0.0f, 0.0f, 48.0f, 48.0f));
-  layer->Preroll(preroll_context(), SkMatrix());
+  layer->Preroll(preroll_context());
   layer->Paint(paint_context());
   auto data = mock_canvas().draw_calls().front().data;
-  auto imageData = std::get<MockCanvas::DrawImageDataNoPaint>(data);
-  auto first_draw_width = imageData.image->width();
+  auto image_data = std::get<MockCanvas::DrawImageDataNoPaint>(data);
+  auto first_draw_width = image_data.image->width();
 
   // Create a second PerformanceOverlayLayer with different bounds.
   layer = std::make_shared<PerformanceOverlayLayer>(overlay_opts);
   layer->set_paint_bounds(SkRect::MakeLTRB(0.0f, 0.0f, 64.0f, 64.0f));
-  layer->Preroll(preroll_context(), SkMatrix());
+  layer->Preroll(preroll_context());
   layer->Paint(paint_context());
   data = mock_canvas().draw_calls().back().data;
-  imageData = std::get<MockCanvas::DrawImageDataNoPaint>(data);
-  auto refreshed_draw_width = imageData.image->width();
+  image_data = std::get<MockCanvas::DrawImageDataNoPaint>(data);
+  auto refreshed_draw_width = image_data.image->width();
 
   EXPECT_NE(first_draw_width, refreshed_draw_width);
 }

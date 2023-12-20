@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef FLUTTER_IMPELLER_RENDERER_BACKEND_GLES_PIPELINE_LIBRARY_GLES_H_
+#define FLUTTER_IMPELLER_RENDERER_BACKEND_GLES_PIPELINE_LIBRARY_GLES_H_
 
 #include "flutter/fml/macros.h"
 #include "impeller/renderer/backend/gles/reactor_gles.h"
@@ -23,15 +24,28 @@ class PipelineLibraryGLES final : public PipelineLibrary {
   ReactorGLES::Ref reactor_;
   PipelineMap pipelines_;
 
-  PipelineLibraryGLES(ReactorGLES::Ref reactor);
+  explicit PipelineLibraryGLES(ReactorGLES::Ref reactor);
 
   // |PipelineLibrary|
   bool IsValid() const override;
 
   // |PipelineLibrary|
-  PipelineFuture GetRenderPipeline(PipelineDescriptor descriptor) override;
+  PipelineFuture<PipelineDescriptor> GetPipeline(
+      PipelineDescriptor descriptor) override;
 
-  FML_DISALLOW_COPY_AND_ASSIGN(PipelineLibraryGLES);
+  // |PipelineLibrary|
+  PipelineFuture<ComputePipelineDescriptor> GetPipeline(
+      ComputePipelineDescriptor descriptor) override;
+
+  // |PipelineLibrary|
+  void RemovePipelinesWithEntryPoint(
+      std::shared_ptr<const ShaderFunction> function) override;
+
+  PipelineLibraryGLES(const PipelineLibraryGLES&) = delete;
+
+  PipelineLibraryGLES& operator=(const PipelineLibraryGLES&) = delete;
 };
 
 }  // namespace impeller
+
+#endif  // FLUTTER_IMPELLER_RENDERER_BACKEND_GLES_PIPELINE_LIBRARY_GLES_H_
